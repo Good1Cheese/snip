@@ -164,6 +164,19 @@ func (p *Pipeline) Run(command string, args []string) int {
 		filtered = pipelineInput
 	}
 
+	// Apply summary line (token-neutral)
+	if p.summaryEnabled() && filterErr == nil {
+		info := SummaryInfo{
+			FilterName:    f.Name,
+			FilterVersion: f.Version,
+			InjectedArgs:  ComputeInjectedArgs(fullArgs, finalArgs),
+			PipelineNames: f.PipelineActionNames(),
+		}
+		if summary := BuildSummaryLine(info); summary != "" {
+			filtered = ApplySummary(filtered, summary)
+		}
+	}
+
 	// Tee: save raw output if needed
 	hint := tee.MaybeSave(pipelineInput, result.ExitCode, command, p.TeeConfig)
 
@@ -307,6 +320,16 @@ func (p *Pipeline) Passthrough(command string, args []string) int {
 // rather than sending nothing to the LLM (issue #85).
 func shouldRestoreRaw(filtered, raw string) bool {
 	return strings.TrimSpace(filtered) == "" && strings.TrimSpace(raw) != ""
+}
+
+func (p *Pipeline) summaryEnabled() bool {
+	if p.UltraCompact {
+		return false
+	}
+	if p.Config != nil {
+		return p.Config.Display.Summary
+	}
+	return true
 }
 
 // isFilterEnabled returns whether a filter is enabled. A nil map means all

@@ -35,6 +35,7 @@ type DisplayConfig struct {
 	Color         bool `toml:"color"`
 	Emoji         bool `toml:"emoji"`
 	QuietNoFilter bool `toml:"quiet_no_filter"`
+	Summary       bool `toml:"summary"`
 }
 
 type FiltersConfig struct {
@@ -114,8 +115,9 @@ func DefaultConfig() *Config {
 			DBPath: filepath.Join(home, ".local", "share", "snip", "tracking.db"),
 		},
 		Display: DisplayConfig{
-			Color: true,
-			Emoji: true,
+			Color:   true,
+			Emoji:   true,
+			Summary: true,
 		},
 		Filters: FiltersConfig{
 			Dir: filepath.Join(home, ".config", "snip", "filters"),
