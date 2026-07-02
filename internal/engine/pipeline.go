@@ -164,7 +164,11 @@ func (p *Pipeline) Run(command string, args []string) int {
 		filtered = pipelineInput
 	}
 
-	// Apply summary line (token-neutral)
+	// Compute token counts before summary so we can use savings as the budget
+	inputTokens := utils.EstimateTokens(pipelineInput)
+	filteredTokens := utils.EstimateTokens(filtered)
+
+	// Apply summary line (additive only — never removes content)
 	if p.summaryEnabled() && filterErr == nil {
 		info := SummaryInfo{
 			FilterName:    f.Name,
@@ -173,7 +177,7 @@ func (p *Pipeline) Run(command string, args []string) int {
 			PipelineNames: f.PipelineActionNames(),
 		}
 		if summary := BuildSummaryLine(info); summary != "" {
-			filtered = ApplySummary(filtered, summary)
+			filtered = PrependSummary(filtered, summary, inputTokens, filteredTokens)
 		}
 	}
 
@@ -191,7 +195,6 @@ func (p *Pipeline) Run(command string, args []string) int {
 	}
 
 	// Track (skip if no input — nothing meaningful to measure)
-	inputTokens := utils.EstimateTokens(pipelineInput)
 	if inputTokens > 0 {
 		originalCmd := command + " " + strings.Join(fullArgs, " ")
 		snipCmd := command + " " + strings.Join(finalArgs, " ")

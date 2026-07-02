@@ -79,53 +79,87 @@ func TestBuildSummaryLineMultipleArgs(t *testing.T) {
 	}
 }
 
-func TestApplySummaryEmptySkipped(t *testing.T) {
+func TestPrependSummaryEmptySkipped(t *testing.T) {
 	filtered := "line1\nline2\nline3\n"
-	got := ApplySummary(filtered, "")
+	got := PrependSummary(filtered, "", 100, 10)
 	if got != filtered {
 		t.Errorf("expected unchanged output, got %q", got)
 	}
 }
 
-func TestApplySummarySingleLineSkipped(t *testing.T) {
+func TestPrependSummarySingleLineSkipped(t *testing.T) {
 	filtered := "line1\n"
-	got := ApplySummary(filtered, "[snip: test v1 | +--flag]")
+	got := PrependSummary(filtered, "[snip: test v1 | +--flag]", 1000, 10)
 	if got != filtered {
 		t.Errorf("expected unchanged output, got %q", got)
 	}
 }
 
-func TestApplySummaryTwoLinesSkipped(t *testing.T) {
+func TestPrependSummaryTwoLinesSkipped(t *testing.T) {
 	filtered := "line1\nline2\n"
-	got := ApplySummary(filtered, "[snip: test v1 | +--flag]")
+	got := PrependSummary(filtered, "[snip: test v1 | +--flag]", 1000, 10)
 	if got != filtered {
 		t.Errorf("expected unchanged output, got %q", got)
 	}
 }
 
-func TestApplySummarySufficientOutput(t *testing.T) {
+func TestPrependSummaryAddsLine(t *testing.T) {
 	filtered := "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n"
 	summary := "[snip: test v1 | +--x]"
-	got := ApplySummary(filtered, summary)
+	got := PrependSummary(filtered, summary, 1000, utils.EstimateTokens(filtered))
 	if !strings.HasPrefix(got, summary+"\n") {
 		t.Errorf("expected output to start with summary, got %q", got)
 	}
-}
-
-func TestApplySummaryLargerThanOutputSkipped(t *testing.T) {
-	filtered := "ab\ncd\nef\n"
-	summary := "[snip: very-long-filter-name-here v999 | +--extremely-long-flag | action1>action2>action3>action4]"
-	got := ApplySummary(filtered, summary)
-	if got != filtered {
-		t.Errorf("expected unchanged output, got %q", got)
+	if !strings.HasSuffix(got, filtered) {
+		t.Errorf("expected original content preserved, got %q", got)
 	}
 }
 
-func TestApplySummaryTokenNeutral(t *testing.T) {
-	inputs := []string{
-		"line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n",
-		strings.Repeat("a long line with content\n", 20),
-		"short\nmedium length line\na very long line that has quite a lot of content in it\nfourth\nfifth\nsixth\n",
+func TestPrependSummaryPreservesAllContent(t *testing.T) {
+	filtered := "line1\nline2\nline3\nline4\nline5\n"
+	summary := "[snip: git-status v2 | +--porcelain]"
+	got := PrependSummary(filtered, summary, 1000, utils.EstimateTokens(filtered))
+	for _, line := range []string{"line1", "line2", "line3", "line4", "line5"} {
+		if !strings.Contains(got, line) {
+			t.Errorf("expected %q to be preserved in output, got %q", line, got)
+		}
+	}
+}
+
+func TestPrependSummarySkipsWhenSavingsTooSmall(t *testing.T) {
+	filtered := "line1\nline2\nline3\n"
+	summary := "[snip: test v1 | +--flag]"
+	summaryTokens := utils.EstimateTokens(summary + "\n")
+	filteredTokens := utils.EstimateTokens(filtered)
+	// inputTokens just barely above filteredTokens — savings < summary cost
+	inputTokens := filteredTokens + summaryTokens - 1
+	got := PrependSummary(filtered, summary, inputTokens, filteredTokens)
+	if got != filtered {
+		t.Errorf("expected unchanged output when savings too small, got %q", got)
+	}
+}
+
+func TestPrependSummaryAppliesWhenSavingsSufficient(t *testing.T) {
+	filtered := "line1\nline2\nline3\n"
+	summary := "[snip: test v1 | +--flag]"
+	summaryTokens := utils.EstimateTokens(summary + "\n")
+	filteredTokens := utils.EstimateTokens(filtered)
+	// inputTokens well above filteredTokens — savings > summary cost
+	inputTokens := filteredTokens + summaryTokens + 100
+	got := PrependSummary(filtered, summary, inputTokens, filteredTokens)
+	if !strings.HasPrefix(got, summary+"\n") {
+		t.Errorf("expected summary prepended, got %q", got)
+	}
+}
+
+func TestPrependSummaryNeverExceedsRawInput(t *testing.T) {
+	inputs := []struct {
+		filtered    string
+		inputTokens int
+	}{
+		{"line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n", 500},
+		{strings.Repeat("a long line with content\n", 20), 2000},
+		{"short\nmedium length line\na very long line that has quite a lot of content in it\nfourth\nfifth\nsixth\n", 300},
 	}
 	summaries := []string{
 		"[snip: git-status v2 | +--porcelain | keep_lines>group_by]",
@@ -133,15 +167,14 @@ func TestApplySummaryTokenNeutral(t *testing.T) {
 		"[snip: go-test v3 | +-json | keep_lines>aggregate>format_template]",
 	}
 
-	for _, filtered := range inputs {
+	for _, tc := range inputs {
+		filteredTokens := utils.EstimateTokens(tc.filtered)
 		for _, summary := range summaries {
-			result := ApplySummary(filtered, summary)
-			originalTokens := utils.EstimateTokens(filtered)
+			result := PrependSummary(tc.filtered, summary, tc.inputTokens, filteredTokens)
 			resultTokens := utils.EstimateTokens(result)
-
-			if resultTokens > originalTokens {
-				t.Errorf("token neutrality violated: original=%d, result=%d, summary=%q, filtered=%q",
-					originalTokens, resultTokens, summary, filtered[:min(50, len(filtered))])
+			if resultTokens > tc.inputTokens {
+				t.Errorf("output exceeds raw input: input=%d, result=%d, summary=%q",
+					tc.inputTokens, resultTokens, summary)
 			}
 		}
 	}

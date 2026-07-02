@@ -117,7 +117,7 @@ func DefaultConfig() *Config {
 		Display: DisplayConfig{
 			Color:   true,
 			Emoji:   true,
-			Summary: true,
+			Summary: false,
 		},
 		Filters: FiltersConfig{
 			Dir: filepath.Join(home, ".config", "snip", "filters"),

@@ -52,10 +52,11 @@ func BuildSummaryLine(info SummaryInfo) string {
 	return b.String()
 }
 
-// ApplySummary prepends a summary line to filtered output while maintaining
-// token neutrality. Returns the original output unchanged if the summary
-// cannot fit within the token budget.
-func ApplySummary(filtered string, summary string) string {
+// PrependSummary prepends a summary line to filtered output without removing
+// any content. The summary is only added when the token savings from filtering
+// exceed the cost of the summary line itself, guaranteeing the output with
+// summary is always smaller than the original raw output.
+func PrependSummary(filtered string, summary string, inputTokens, filteredTokens int) string {
 	if summary == "" {
 		return filtered
 	}
@@ -65,27 +66,13 @@ func ApplySummary(filtered string, summary string) string {
 		return filtered
 	}
 
-	summaryWithNewline := summary + "\n"
-	summaryTokens := utils.EstimateTokens(summaryWithNewline)
-	filteredTokens := utils.EstimateTokens(filtered)
-
-	if summaryTokens >= filteredTokens {
+	summaryTokens := utils.EstimateTokens(summary + "\n")
+	savedTokens := inputTokens - filteredTokens
+	if summaryTokens >= savedTokens {
 		return filtered
 	}
 
-	// Trim trailing lines until the summary fits within the original budget
-	remaining := lines
-	remainingStr := strings.Join(remaining, "\n") + "\n"
-	for len(remaining) > 1 && utils.EstimateTokens(remainingStr)+summaryTokens > filteredTokens {
-		remaining = remaining[:len(remaining)-1]
-		remainingStr = strings.Join(remaining, "\n") + "\n"
-	}
-
-	if utils.EstimateTokens(remainingStr)+summaryTokens > filteredTokens {
-		return filtered
-	}
-
-	return summaryWithNewline + remainingStr
+	return summary + "\n" + filtered
 }
 
 // ComputeInjectedArgs returns args present in finalArgs but not in fullArgs.
