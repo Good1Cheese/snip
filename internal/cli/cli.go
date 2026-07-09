@@ -68,6 +68,9 @@ func Run(args []string) int {
 		if len(cmdArgs) > 0 && cmdArgs[0] == "copilot" {
 			return runHookCopilot()
 		}
+		if len(cmdArgs) > 0 && cmdArgs[0] == "grok" {
+			return runHookGrok()
+		}
 		return runHook()
 
 	case "hook-audit":
@@ -293,6 +296,27 @@ func runHookCopilot() int {
 	return 0
 }
 
+// grokDenyExitCode is the exit code Grok Build requires for a PreToolUse deny
+// to take effect (exit 0 allows; anything else but 2 is fail-open).
+const grokDenyExitCode = 2
+
+// runHookGrok handles "snip hook grok" — Grok Build's PreToolUse hook entry.
+// Grok Build cannot rewrite the command in place, so the handler responds with
+// a deny + suggested rewrite; the deny only takes effect with exit code 2.
+// Every other path returns 0 (graceful degradation: Grok Build hooks are
+// fail-open, so the command runs unfiltered).
+func runHookGrok() int {
+	snipBin, commands, prefixes, ok := loadHookContext()
+	if !ok {
+		return 0
+	}
+	denied, _ := hook.RunGrok(os.Stdin, os.Stdout, commands, prefixes, snipBin)
+	if denied {
+		return grokDenyExitCode
+	}
+	return 0
+}
+
 // loadHookContext resolves the snip binary path and loads the filter
 // registry. Returns ok=false on any failure so callers can exit 0 silently.
 func loadHookContext() (snipBin string, commands []string, prefixes []hook.TransparentPrefix, ok bool) {
@@ -467,7 +491,7 @@ Commands:
 Init flags:
   --agent <name>  Agent to configure:
                   claude-code (default), cursor, codex, pi, windsurf, cline,
-                  copilot, gemini, kilocode, antigravity
+                  copilot, gemini, kilocode, antigravity, grok
   --uninstall     Remove snip integration for the agent
 
 Flags:

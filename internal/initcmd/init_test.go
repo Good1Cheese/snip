@@ -329,7 +329,7 @@ func TestParseAgentEquals(t *testing.T) {
 func TestIsValidAgent(t *testing.T) {
 	valid := []string{
 		"claude-code", "cursor", "codex", "windsurf", "cline",
-		"copilot", "gemini", "kilocode", "antigravity",
+		"copilot", "gemini", "kilocode", "antigravity", "grok",
 	}
 	for _, a := range valid {
 		if !isValidAgent(a) {
@@ -515,6 +515,7 @@ func TestPromptAgentFiles(t *testing.T) {
 		filename string
 	}{
 		{"codex", "AGENTS.md"},
+		{"grok", "AGENTS.md"},
 		{"windsurf", ".windsurfrules"},
 		{"cline", ".clinerules"},
 		{"copilot", filepath.Join(".github", "copilot-instructions.md")},

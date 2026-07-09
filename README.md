@@ -149,6 +149,7 @@ snip integrates with every major AI coding assistant. One binary, universal comp
 | **Gemini CLI** | `snip init --agent gemini` | GEMINI.md prompt injection |
 | **Codex (OpenAI)** | `snip init --agent codex` | AGENTS.md prompt injection |
 | **Pi (pi.dev)** | `snip init --agent pi` | PreToolUse hook (via [pi-hooks](https://github.com/hsingjui/pi-hooks)) |
+| **Grok Build (xAI)** | `snip init --agent grok` | PreToolUse hook (deny + re-run suggestion) |
 | **Windsurf** | `snip init --agent windsurf` | .windsurfrules prompt injection |
 | **Cline / Roo Code** | `snip init --agent cline` | .clinerules prompt injection |
 | **Kilo Code** | `snip init --agent kilocode` | .kilocode/rules/ prompt injection |
@@ -200,6 +201,23 @@ Then run `/reload` (or restart Pi). Once active, snip rewrites supported command
 ```bash
 snip init --agent pi --uninstall   # remove the hook
 ```
+
+### Grok Build (xAI)
+
+```bash
+snip init --agent grok
+```
+
+This writes `~/.grok/hooks/snip.json` with a `PreToolUse` hook matching the shell tool. Grok Build hooks cannot rewrite commands in place (the hook contract is allow/deny only), so snip denies matched commands with a re-run suggestion (`"…/snip" run -- <command>`), the same pattern as Codex. Non-matching commands pass through untouched, and the hook is fail-open: if snip breaks, commands simply run unfiltered.
+
+Prefer prompt injection instead? Grok Build reads `AGENTS.md` natively:
+
+```bash
+snip init --agent grok --mode prompt   # creates AGENTS.md
+snip init --agent grok --uninstall     # remove the hook
+```
+
+`AGENTS.md` is shared with Codex, so `--uninstall` never deletes it; it prints a reminder instead.
 
 ### Copilot / Gemini / Codex / Windsurf / Cline / Kilo Code / Antigravity
 

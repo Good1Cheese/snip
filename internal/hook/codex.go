@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/edouard-claude/snip/internal/hookaudit"
@@ -47,58 +46,30 @@ func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []Transparen
 		return nil
 	}
 
-	firstLine := ti.Command
-	if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
-		firstLine = firstLine[:idx]
-	}
-	firstSegment := ExtractFirstSegment(firstLine)
-
-	prefix, envVars, bareCmd := ParseSegment(firstSegment)
-	base := BaseCommand(bareCmd)
-
-	quotedBin := fmt.Sprintf("%q", snipBin)
-	trimmed := strings.TrimLeft(bareCmd, " \t")
-	if base == quotedBin || base == snipBin ||
-		strings.HasPrefix(trimmed, quotedBin) || strings.HasPrefix(trimmed, snipBin) {
-		return nil
-	}
-
 	cmdSet := make(map[string]struct{}, len(commands))
 	for _, c := range commands {
 		cmdSet[c] = struct{}{}
 	}
 
-	restOfCmd := ti.Command[len(firstSegment):]
-
-	// Transparent runner prefix (e.g. "uv run pytest"): suggest wrapping the
-	// inner command so its filter applies, leaving the prefix in place. Only when
-	// a known inner command is located; otherwise fall back to the plain base
-	// check below.
-	var suggested string
-	if tp, restAfter, ok := matchTransparentPrefix(bareCmd, prefixes); ok {
-		if before, _, found := LocateInner(restAfter, cmdSet, tp.ValueFlags, tp.SkipFlags); found {
-			suggested = prefix + envVars + tp.Prefix + " " + before + quotedBin + " run -- " + restAfter[len(before):] + restOfCmd
+	sug := suggestSnipRerun(ti.Command, cmdSet, prefixes, snipBin)
+	if sug.alreadySnip {
+		return nil
+	}
+	if sug.command == "" {
+		if audit {
+			hookaudit.Append(hookaudit.Event{
+				Timestamp: time.Now().UTC(),
+				Command:   ti.Command,
+				Base:      sug.base,
+				Matched:   false,
+				Rewritten: false,
+				Agent:     codexAgent,
+			})
 		}
+		return nil
 	}
 
-	if suggested == "" {
-		if _, ok := cmdSet[base]; !ok {
-			if audit {
-				hookaudit.Append(hookaudit.Event{
-					Timestamp: time.Now().UTC(),
-					Command:   ti.Command,
-					Base:      base,
-					Matched:   false,
-					Rewritten: false,
-					Agent:     codexAgent,
-				})
-			}
-			return nil
-		}
-		suggested = prefix + envVars + quotedBin + " run -- " + bareCmd + restOfCmd
-	}
-
-	reason := fmt.Sprintf("snip can filter this command. Re-run as: %s", suggested)
+	reason := fmt.Sprintf("snip can filter this command. Re-run as: %s", sug.command)
 
 	output := map[string]any{
 		"hookSpecificOutput": map[string]any{
@@ -112,7 +83,7 @@ func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []Transparen
 		hookaudit.Append(hookaudit.Event{
 			Timestamp: time.Now().UTC(),
 			Command:   ti.Command,
-			Base:      base,
+			Base:      sug.base,
 			Matched:   true,
 			Rewritten: false,
 			Agent:     codexAgent,
