@@ -95,10 +95,9 @@ func uninstallCodex() error {
 		return fmt.Errorf("unpatch codex config.toml: %w", err)
 	}
 
-	// Best-effort cleanup of a legacy AGENTS.md.
-	if legacy := detectLegacyAgentsMD("."); legacy != "" {
-		_ = os.Remove(legacy)
-	}
+	// Best-effort cleanup of a legacy AGENTS.md. Skipped when the file is shared
+	// with another prompt-mode agent (grok), which the helper reports on.
+	removeLegacyPromptFile("codex")
 
 	fmt.Println("snip uninstalled (codex)")
 	return nil

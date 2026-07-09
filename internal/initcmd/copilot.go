@@ -109,6 +109,11 @@ func uninstallCopilot() error {
 
 // removeLegacyPromptFile deletes the prompt-injection file for agent if it still
 // contains the snip template marker, then prunes any empty parent directories.
+//
+// Files shared by several agents (AGENTS.md, written identically by codex and
+// grok) are never deleted: snip cannot tell which agent wrote one, so removing
+// it would silently break the other agent's integration. The user is told to
+// remove it manually instead.
 func removeLegacyPromptFile(agent string) {
 	filename, ok := promptAgentFiles[agent]
 	if !ok {
@@ -120,6 +125,10 @@ func removeLegacyPromptFile(agent string) {
 		return
 	}
 	if !strings.Contains(string(data), snipPromptMarker) {
+		return
+	}
+	if promptFileShared(filename) {
+		fmt.Printf("  kept %s (shared with another agent) — delete it manually if unused\n", targetPath)
 		return
 	}
 	if err := os.Remove(targetPath); err != nil {

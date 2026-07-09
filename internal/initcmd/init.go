@@ -18,19 +18,34 @@ const (
 // validAgents lists all supported agent names.
 var validAgents = []string{
 	"claude-code", "cursor", "codex", "pi", "windsurf", "cline",
-	"copilot", "gemini", "kilocode", "antigravity",
+	"copilot", "gemini", "kilocode", "antigravity", "grok",
 }
 
 // promptAgentFiles maps prompt-injection agents to their target file paths.
 // Paths may include subdirectories (created automatically on init).
 var promptAgentFiles = map[string]string{
 	"codex":       "AGENTS.md",
+	"grok":        "AGENTS.md",
 	"windsurf":    ".windsurfrules",
 	"cline":       ".clinerules",
 	"copilot":     filepath.Join(".github", "copilot-instructions.md"),
 	"gemini":      "GEMINI.md",
 	"kilocode":    filepath.Join(".kilocode", "rules", "snip-rules.md"),
 	"antigravity": filepath.Join(".agents", "rules", "snip-rules.md"),
+}
+
+// promptFileShared reports whether more than one agent writes filename. Shared
+// files (AGENTS.md, claimed by both codex and grok) carry agent-agnostic
+// content, so snip cannot tell which agent wrote one and must never delete it
+// on a single-agent uninstall.
+func promptFileShared(filename string) bool {
+	n := 0
+	for _, f := range promptAgentFiles {
+		if f == filename {
+			n++
+		}
+	}
+	return n > 1
 }
 
 // parseAgent extracts the --agent value from args.
@@ -140,6 +155,13 @@ func Run(args []string) error {
 			return initPromptAgent(agent, snipBin, filterDir)
 		}
 		return initCopilotHook(snipBin, home, filterDir)
+	case "grok":
+		// Grok Build defaults to runtime hooks; --mode prompt selects the
+		// AGENTS.md prompt-injection path (Grok Build reads AGENTS.md natively).
+		if mode == "prompt" {
+			return initPromptAgent(agent, snipBin, filterDir)
+		}
+		return initGrok(snipBin, home, filterDir)
 	case "windsurf", "cline", "gemini", "kilocode", "antigravity":
 		return initPromptAgent(agent, snipBin, filterDir)
 	}
@@ -268,6 +290,8 @@ func Uninstall(agent string) error {
 		return uninstallPi()
 	case "copilot":
 		return uninstallCopilot()
+	case "grok":
+		return uninstallGrok()
 	case "windsurf", "cline", "gemini", "kilocode", "antigravity":
 		return uninstallPromptAgent(agent)
 	}
