@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"slices"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -37,8 +38,8 @@ pipeline:
 	if f.Match.Command != "git" {
 		t.Errorf("match.command = %q", f.Match.Command)
 	}
-	if f.Match.Subcommand != "log" {
-		t.Errorf("match.subcommand = %q", f.Match.Subcommand)
+	if !f.Match.Subcommand.IsPresent() || f.Match.Subcommand.String() != "log" {
+		t.Errorf("match.subcommand = %q", f.Match.Subcommand.String())
 	}
 	if len(f.Match.ExcludeFlags) != 1 || f.Match.ExcludeFlags[0] != "--format" {
 		t.Errorf("exclude_flags = %v", f.Match.ExcludeFlags)
@@ -60,6 +61,77 @@ pipeline:
 	}
 	if f.Pipeline[1].ActionName != "head" {
 		t.Errorf("pipeline[1].action = %q", f.Pipeline[1].ActionName)
+	}
+}
+
+func TestMatchSubcommandYAMLScalarListAndPresence(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		present bool
+		values  []string
+	}{
+		{
+			name: "omitted",
+			yaml: `command: "npm"`,
+		},
+		{
+			name:    "legacy scalar",
+			yaml:    "command: npm\nsubcommand: install\n",
+			present: true,
+			values:  []string{"install"},
+		},
+		{
+			name:    "list",
+			yaml:    "command: npm\nsubcommand: [install, add, i]\n",
+			present: true,
+			values:  []string{"install", "add", "i"},
+		},
+		{
+			name:    "bare command entry",
+			yaml:    "command: yarn\nsubcommand: [\"\", install]\n",
+			present: true,
+			values:  []string{"", "install"},
+		},
+		{
+			name:    "empty scalar is explicit bare command",
+			yaml:    "command: yarn\nsubcommand: \"\"\n",
+			present: true,
+			values:  []string{""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m Match
+			if err := yaml.Unmarshal([]byte(tt.yaml), &m); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if m.Subcommand.IsPresent() != tt.present {
+				t.Fatalf("present = %v, want %v", m.Subcommand.IsPresent(), tt.present)
+			}
+			if !slices.Equal(m.Subcommand.Values(), tt.values) {
+				t.Errorf("values = %v, want %v", m.Subcommand.Values(), tt.values)
+			}
+		})
+	}
+}
+
+func TestMatchSubcommandConstructors(t *testing.T) {
+	single := NewSubcommand("install")
+	if !single.IsPresent() || !slices.Equal(single.Values(), []string{"install"}) {
+		t.Fatalf("single constructor = present %v values %v", single.IsPresent(), single.Values())
+	}
+
+	multi := NewSubcommands("", "install", "add")
+	if !multi.IsPresent() || !slices.Equal(multi.Values(), []string{"", "install", "add"}) {
+		t.Fatalf("multi constructor = present %v values %v", multi.IsPresent(), multi.Values())
+	}
+
+	values := multi.Values()
+	values[0] = "mutated"
+	if got := multi.Values()[0]; got != "" {
+		t.Errorf("Values exposed internal slice, first value = %q", got)
 	}
 }
 
@@ -124,7 +196,7 @@ func TestFilterCloneDeepCopy(t *testing.T) {
 	original := Filter{
 		Name:    "test-clone",
 		Version: 2,
-		Match:   Match{Command: "git", Subcommand: "log"},
+		Match:   Match{Command: "git", Subcommand: NewSubcommand("log")},
 		OnError: "passthrough",
 		Pipeline: Pipeline{
 			{ActionName: "head", Params: map[string]any{"n": 10}},

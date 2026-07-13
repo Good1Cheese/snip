@@ -29,6 +29,9 @@ func ValidateFilter(f *Filter) error {
 	if f.Match.Command == "" {
 		return fmt.Errorf("validate filter %q: missing 'match.command'", f.Name)
 	}
+	if f.Match.Subcommand.IsPresent() && len(f.Match.Subcommand.Values()) == 0 {
+		return fmt.Errorf("validate filter %q: 'match.subcommand' must not be an empty list", f.Name)
+	}
 	for _, s := range f.Streams {
 		if !validStreams[s] {
 			return fmt.Errorf("validate filter %q: unknown stream %q (valid: stdout, stderr)", f.Name, s)

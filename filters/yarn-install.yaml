@@ -1,10 +1,17 @@
 name: "yarn-install"
 version: 3
-description: "Condensed yarn install output: completion summary and errors"
+description: "Condensed yarn dependency-change output: completion summary and errors"
 
 match:
   command: "yarn"
-  subcommand: "install"
+  subcommand:
+    - ""
+    - "install"
+    - "add"
+    - "remove"
+    - "up"
+    - "upgrade"
+    - "upgrade-interactive"
 
 streams:
   - stdout
@@ -13,7 +20,7 @@ streams:
 pipeline:
   - action: "strip_ansi"
   - action: "remove_lines"
-    pattern: "(^\\[\\d+/\\d+\\] (Resolving|Fetching|Linking|Building)|YN0000: [\\u250c\\u2514\\u2502]|^\\s*$)"
+    pattern: "(^\\[\\d+/\\d+\\] (Resolving|Fetching|Linking|Building)|YN0000: [┌└│]|^\\s*$)"
   - action: "truncate_lines"
     max: 120
   - action: "head"
@@ -21,3 +28,30 @@ pipeline:
     overflow_msg: "... more output truncated"
 
 on_error: "passthrough"
+
+tests:
+  - name: "classic install"
+    input: |
+      [1/4] Resolving packages...
+      [2/4] Fetching packages...
+      [3/4] Linking dependencies...
+      [4/4] Building fresh packages...
+      success Saved lockfile.
+      Done in 12.34s.
+    expected: |
+      success Saved lockfile.
+      Done in 12.34s.
+  - name: "modern install"
+    input: |
+      YN0000: ┌ Resolution step
+      YN0000: │ Some package output
+      YN0000: └ Completed
+      ➤ YN0000: Done in 0s 123ms
+    expected: |
+      ➤ YN0000: Done in 0s 123ms
+  - name: "install error"
+    input: |
+      [1/4] Resolving packages...
+      error Couldn't find package "missing" on the "npm" registry.
+    expected: |
+      error Couldn't find package "missing" on the "npm" registry.

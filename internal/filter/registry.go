@@ -19,11 +19,19 @@ func NewRegistry(filters []Filter) *Registry {
 		filters: filters,
 	}
 	for _, f := range filters {
-		key := f.Match.Command
-		if f.Match.Subcommand != "" {
-			key += ":" + f.Match.Subcommand
+		if !f.Match.Subcommand.IsPresent() {
+			r.byKey[f.Match.Command] = append(r.byKey[f.Match.Command], f)
+			continue
 		}
-		r.byKey[key] = append(r.byKey[key], f)
+		seen := make(map[string]struct{})
+		for _, subcommand := range f.Match.Subcommand.Values() {
+			if _, ok := seen[subcommand]; ok {
+				continue
+			}
+			seen[subcommand] = struct{}{}
+			key := f.Match.Command + ":" + subcommand
+			r.byKey[key] = append(r.byKey[key], f)
+		}
 	}
 	return r
 }
@@ -47,19 +55,17 @@ func (r *Registry) Match(command, subcommand string, args []string) *Filter {
 		allArgs = append(allArgs, args...)
 	}
 
-	// Try exact match first (command:subcommand)
-	if subcommand != "" {
-		key := command + ":" + subcommand
-		if candidates, ok := r.byKey[key]; ok {
-			for i := range candidates {
-				if matchesFlags(&candidates[i], allArgs) {
-					return &candidates[i]
-				}
+	// Try exact match first (command:subcommand), including command: for bare invocations.
+	key := command + ":" + subcommand
+	if candidates, ok := r.byKey[key]; ok {
+		for i := range candidates {
+			if matchesFlags(&candidates[i], allArgs) {
+				return &candidates[i]
 			}
 		}
 	}
 
-	// Try command-only match
+	// Try command-only wildcard match for filters that omit subcommand.
 	if candidates, ok := r.byKey[command]; ok {
 		for i := range candidates {
 			if matchesFlags(&candidates[i], allArgs) {
@@ -162,10 +168,8 @@ func (r *Registry) HasAnyFilter(command, subcommand string) bool {
 	if command != "" && command != "/" && command != "\\" {
 		command = filepath.Base(command)
 	}
-	if subcommand != "" {
-		if _, ok := r.byKey[command+":"+subcommand]; ok {
-			return true
-		}
+	if _, ok := r.byKey[command+":"+subcommand]; ok {
+		return true
 	}
 	_, ok := r.byKey[command]
 	return ok
