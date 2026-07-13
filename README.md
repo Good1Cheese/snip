@@ -403,6 +403,7 @@ db_path = "~/.local/share/snip/tracking.db"
 color = true
 emoji = true
 quiet_no_filter = false  # suppress "no filter" stderr messages
+summary = false          # prepend a "[snip: ...]" line showing which filter/args were applied
 
 [filters]
 dir = "~/.config/snip/filters"
