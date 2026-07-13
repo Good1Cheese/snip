@@ -142,6 +142,7 @@ func Run(args []string) int {
 		fmt.Printf("display.color: %v\n", cfg.Display.Color)
 		fmt.Printf("display.emoji: %v\n", cfg.Display.Emoji)
 		fmt.Printf("display.quiet_no_filter: %v\n", cfg.Display.QuietNoFilter)
+		fmt.Printf("display.summary: %v\n", cfg.Display.Summary)
 		if len(cfg.Filters.Enable) == 0 {
 			fmt.Println("filters.enable: (all enabled)")
 		} else {

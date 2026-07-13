@@ -332,7 +332,7 @@ func (p *Pipeline) summaryEnabled() bool {
 	if p.Config != nil {
 		return p.Config.Display.Summary
 	}
-	return true
+	return false
 }
 
 // isFilterEnabled returns whether a filter is enabled. A nil map means all

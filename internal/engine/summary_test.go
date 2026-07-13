@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/edouard-claude/snip/internal/utils"
 )
@@ -61,6 +62,24 @@ func TestBuildSummaryLineLongArgTruncated(t *testing.T) {
 		InjectedArgs:  []string{"--pretty=format:%h %s (%ar) <%an>"},
 	})
 	want := "[snip: git-log v1 | +--pretty=format:%...]"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestBuildSummaryLineMultibyteArgTruncated(t *testing.T) {
+	// 25 two-byte runes (50 bytes). A byte-based slice would cut mid-rune and
+	// emit invalid UTF-8; truncation must be rune-safe.
+	arg := strings.Repeat("é", 25)
+	got := BuildSummaryLine(SummaryInfo{
+		FilterName:    "git-log",
+		FilterVersion: 1,
+		InjectedArgs:  []string{arg},
+	})
+	if !utf8.ValidString(got) {
+		t.Fatalf("summary contains invalid UTF-8: %q", got)
+	}
+	want := "[snip: git-log v1 | +" + strings.Repeat("é", 17) + "...]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

@@ -34,12 +34,7 @@ func BuildSummaryLine(info SummaryInfo) string {
 				b.WriteByte(' ')
 			}
 			b.WriteByte('+')
-			if len(arg) > maxArgDisplayLen {
-				b.WriteString(arg[:maxArgDisplayLen-3])
-				b.WriteString("...")
-			} else {
-				b.WriteString(arg)
-			}
+			b.WriteString(utils.Truncate(arg, maxArgDisplayLen))
 		}
 	}
 
@@ -61,8 +56,9 @@ func PrependSummary(filtered string, summary string, inputTokens, filteredTokens
 		return filtered
 	}
 
-	lines := strings.Split(strings.TrimRight(filtered, "\n"), "\n")
-	if len(lines) < minLinesForSummary {
+	// Count lines without allocating a slice: line count == "\n" count + 1
+	// once trailing newlines are ignored.
+	if strings.Count(strings.TrimRight(filtered, "\n"), "\n")+1 < minLinesForSummary {
 		return filtered
 	}
 
