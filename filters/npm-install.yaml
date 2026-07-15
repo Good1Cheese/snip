@@ -23,7 +23,6 @@ match:
     - "install-clean"
     - "isntall-clean"
     - "update"
-    - "u"
     - "up"
     - "upgrade"
     - "udpate"
