@@ -182,6 +182,49 @@ func TestCheckRejectsArgsBeforeSeparator(t *testing.T) {
 	}
 }
 
+func TestProxyAcceptsSeparator(t *testing.T) {
+	code := Run([]string{"snip", "proxy", "--", "true"})
+	if code != 0 {
+		t.Errorf("Run(proxy -- true) = %d, want 0", code)
+	}
+}
+
+func TestProxyPreservesExitCodeWithSeparator(t *testing.T) {
+	// Distinctive exit code: 1 would collide with snip's own error return.
+	code := Run([]string{"snip", "proxy", "--", "sh", "-c", "exit 3"})
+	if code != 3 {
+		t.Errorf("Run(proxy -- sh -c 'exit 3') = %d, want 3", code)
+	}
+}
+
+func TestProxyEmptyAfterSeparator(t *testing.T) {
+	var code int
+	stderr := captureStderr(func() {
+		code = Run([]string{"snip", "proxy", "--"})
+	})
+	if code != 1 {
+		t.Errorf("Run(proxy --) = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "proxy requires a command argument") {
+		t.Errorf("expected usage error on stderr, got %q", stderr)
+	}
+}
+
+func TestProxyWithoutSeparator(t *testing.T) {
+	code := Run([]string{"snip", "proxy", "true"})
+	if code != 0 {
+		t.Errorf("Run(proxy true) = %d, want 0", code)
+	}
+}
+
+func TestProxyKeepsNonLeadingSeparator(t *testing.T) {
+	// Only a leading "--" is stripped; a later one belongs to the child.
+	code := Run([]string{"snip", "proxy", "sh", "-c", `test "$1" = "--"`, "_", "--"})
+	if code != 0 {
+		t.Errorf("Run(proxy sh -c 'test $1 = --' _ --) = %d, want 0", code)
+	}
+}
+
 func TestCheckNoFilter(t *testing.T) {
 	home := t.TempDir()
 	filterDir := filepath.Join(home, ".config", "snip", "filters")

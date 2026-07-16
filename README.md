@@ -293,6 +293,7 @@ snip discover --since 30    # scan last 30 days
 snip discover --all         # scan all projects
 snip -v <command>           # verbose mode (show filter details)
 snip proxy <command>        # force passthrough (no filtering)
+snip proxy -- <command>     # same, with explicit separator (like run/check)
 snip config                 # show config
 snip init                       # install Claude Code hook
 snip init --agent cursor        # install Cursor hook

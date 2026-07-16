@@ -211,7 +211,11 @@ func Run(args []string) int {
 		return runCheck(targetCmd, targetArgs, flags)
 
 	case "proxy":
-		// Direct passthrough without filtering
+		// Direct passthrough without filtering. The "--" separator is
+		// optional (unlike run/check) to keep "snip proxy <cmd>" working.
+		if len(cmdArgs) > 0 && cmdArgs[0] == "--" {
+			cmdArgs = cmdArgs[1:]
+		}
 		if len(cmdArgs) == 0 {
 			display.PrintError("proxy requires a command argument")
 			return 1
@@ -482,7 +486,7 @@ Commands:
   config          Show current configuration
   trust           Trust project-local filter file(s) by SHA-256 hash
   untrust         Remove filter file(s) from the trust store
-  proxy           Passthrough without filtering
+  proxy           Passthrough without filtering (optional -- separator)
   inspect         Code quality checks for snip's own source
                   --dead-fields   find tagged struct fields never read
                   --append-safety find shared-state append() calls
