@@ -16,6 +16,12 @@ type Config struct {
 	MaxFiles    int
 	MaxFileSize int64
 	Dir         string
+	// ProjectMarker, when non-empty, redirects tee files to
+	// <markerRoot>/.snip/tee/ where markerRoot is the closest ancestor of
+	// the working directory containing the marker (e.g. ".git"). Falls back
+	// to Dir when the marker is not found or the project directory is not
+	// writable.
+	ProjectMarker string
 }
 
 // DefaultConfig returns tee defaults.
@@ -54,14 +60,7 @@ func MaybeSave(raw string, exitCode int, cmd string, cfg Config) string {
 		return ""
 	}
 
-	dir := cfg.Dir
-	if envDir := os.Getenv("SNIP_TEE_DIR"); envDir != "" {
-		dir = envDir
-	}
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "" // Silent failure
-	}
+	dir, project := resolveDir(cfg)
 
 	// Truncate if too large (rune-safe)
 	data := raw
@@ -87,9 +86,15 @@ func MaybeSave(raw string, exitCode int, cmd string, cfg Config) string {
 	}, cmd)
 
 	filename := fmt.Sprintf("%d-%s.log", time.Now().Unix(), safeName)
-	path := filepath.Join(dir, filename)
 
-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+	path, ok := writeTo(dir, project, filename, data)
+	if !ok && project {
+		// Project dir not writable (read-only checkout, root-owned repo):
+		// fall back to the global dir rather than losing the recovery log.
+		dir = cfg.Dir
+		path, ok = writeTo(dir, false, filename, data)
+	}
+	if !ok {
 		return "" // Silent failure
 	}
 
@@ -97,6 +102,60 @@ func MaybeSave(raw string, exitCode int, cmd string, cfg Config) string {
 	rotateFiles(dir, cfg.MaxFiles)
 
 	return fmt.Sprintf("[full output: %s]", path)
+}
+
+// writeTo creates dir and writes the log file into it. For project dirs it
+// also drops a .gitignore so agent-driven `git add -A` never commits raw
+// command output into the repo.
+func writeTo(dir string, project bool, filename, data string) (string, bool) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", false
+	}
+	if project {
+		gi := filepath.Join(dir, ".gitignore")
+		if _, err := os.Stat(gi); err != nil {
+			_ = os.WriteFile(gi, []byte("*\n"), 0644)
+		}
+	}
+	path := filepath.Join(dir, filename)
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+// resolveDir returns the directory tee files are written to, and whether it
+// is a project-local directory derived from the marker walk-up.
+// Priority: SNIP_TEE_DIR env > project marker walk-up > cfg.Dir.
+func resolveDir(cfg Config) (string, bool) {
+	if envDir := os.Getenv("SNIP_TEE_DIR"); envDir != "" {
+		return envDir, false
+	}
+	if cfg.ProjectMarker != "" {
+		if root := findMarkerRoot(cfg.ProjectMarker); root != "" {
+			return filepath.Join(root, ".snip", "tee"), true
+		}
+	}
+	return cfg.Dir, false
+}
+
+// findMarkerRoot walks upward from the current working directory looking for
+// marker (a file or directory name, e.g. ".git"). Returns the directory
+// containing the marker, or "" if none is found up to the filesystem root.
+func findMarkerRoot(marker string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "" // reached root on this platform
+		}
+	}
 }
 
 func rotateFiles(dir string, maxFiles int) {

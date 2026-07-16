@@ -142,6 +142,7 @@ func Run(args []string) int {
 		fmt.Printf("filters.dir: %s\n", strings.Join(cfg.Filters.Dirs(), ", "))
 		fmt.Printf("tee.mode: %s\n", cfg.Tee.Mode)
 		fmt.Printf("tee.max_files: %d\n", cfg.Tee.MaxFiles)
+		fmt.Printf("tee.project_marker: %s\n", cfg.Tee.ProjectMarker)
 		fmt.Printf("display.color: %v\n", cfg.Display.Color)
 		fmt.Printf("display.emoji: %v\n", cfg.Display.Emoji)
 		fmt.Printf("display.quiet_no_filter: %v\n", cfg.Display.QuietNoFilter)
@@ -389,6 +390,7 @@ func runPipeline(command string, args []string, flags Flags) int {
 	teeCfg.Mode = cfg.Tee.Mode
 	teeCfg.MaxFiles = cfg.Tee.MaxFiles
 	teeCfg.MaxFileSize = cfg.Tee.MaxFileSize
+	teeCfg.ProjectMarker = cfg.Tee.ProjectMarker
 
 	pipeline := &engine.Pipeline{
 		Registry:            registry,

@@ -102,6 +102,13 @@ type TeeConfig struct {
 	Mode        string `toml:"mode"` // "failures", "always", "never"
 	MaxFiles    int    `toml:"max_files"`
 	MaxFileSize int64  `toml:"max_file_size"`
+	// ProjectMarker, when set (e.g. ".git"), makes tee walk upward from the
+	// current working directory looking for that file or directory. If found
+	// in directory D, tee files are written to D/.snip/tee/ instead of the
+	// global tee directory (falling back to the global directory when the
+	// project directory is not writable). Empty (default) keeps the global
+	// directory. See issue #107.
+	ProjectMarker string `toml:"project_marker"`
 }
 
 // DefaultConfig returns sensible defaults.

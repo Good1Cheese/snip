@@ -294,6 +294,7 @@ db_path = "/custom/path.db"
 [tee]
 mode = "always"
 max_files = 5
+project_marker = ".git"
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -313,6 +314,9 @@ max_files = 5
 	}
 	if cfg.Tee.MaxFiles != 5 {
 		t.Errorf("expected max_files 5, got %d", cfg.Tee.MaxFiles)
+	}
+	if cfg.Tee.ProjectMarker != ".git" {
+		t.Errorf("expected project_marker '.git', got %q", cfg.Tee.ProjectMarker)
 	}
 }
 
