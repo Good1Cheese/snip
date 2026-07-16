@@ -427,6 +427,12 @@ enabled = true
 mode = "failures"    # "failures" | "always" | "never"
 max_files = 20
 max_file_size = 1048576
+# project_marker = ".git"  # write tee files to <repo-root>/.snip/tee/ instead
+                           # of the global dir when the marker is found by
+                           # walking up from the working directory; a
+                           # .gitignore is created there so logs are never
+                           # committed, and snip falls back to the global dir
+                           # if the repo root is not writable
 ```
 
 ### Multiple Filter Directories
