@@ -166,7 +166,7 @@ snip init
 
 This installs a `PreToolUse` hook that transparently rewrites supported commands. Claude Code never sees the substitution -- it receives compressed output as if the original command produced it.
 
-Supported commands: 127 filters covering git, go, cargo, npm, yarn, pnpm, docker, kubectl, terraform, aws, gh, and 80+ more tools.
+Supported commands: 132 filters covering git, go, cargo, npm, yarn, pnpm, docker, kubectl, terraform, aws, gh, and 80+ more tools.
 
 ```bash
 snip init --uninstall   # remove the hook
@@ -344,9 +344,9 @@ match:
 
 If `subcommand` is omitted, the filter matches every subcommand for that command. To match only a bare command invocation, include an explicit empty string, for example `subcommand: ["", "install"]` to match `yarn` and `yarn install` without matching `yarn why`.
 
-### 127 Built-in Filters
+### 132 Built-in Filters
 
-snip ships with **127 declarative YAML filters** covering all major developer tools:
+snip ships with **132 declarative YAML filters** covering all major developer tools:
 
 | Category | Filters |
 |----------|---------|

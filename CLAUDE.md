@@ -15,16 +15,22 @@ The binary (snip) is the engine. Filters are data files. The two evolve independ
 ```
 cmd/snip/main.go        # Entry point
 embed.go                # Embedded default filters (go:embed)
-filters/*.yaml          # Declarative filter definitions (127 filters)
+filters/*.yaml          # Declarative filter definitions (132 filters)
 internal/
   cli/                  # CLI routing, flag parsing
   config/               # TOML config loading (~/.config/snip/config.toml)
   display/              # Lipgloss terminal styling, gain report
   engine/               # Command execution (goroutines), pipeline orchestration
-  filter/               # DSL types, 16 built-in actions, YAML parser, registry
+  filter/               # DSL types, 20 built-in actions, YAML parser, registry
   hook/                 # Claude Code PreToolUse hook handler (native Go, no bash/jq)
   initcmd/              # Multi-agent hook installation (Claude Code, Cursor, Codex, Windsurf, Cline)
   discover/             # Session history scanner for missed savings
+  learn/                # Scan session history for failed commands, generate CLI-correction rules
+  verify/               # Run the inline `tests:` blocks of filter YAML files
+  trust/                # SHA-256 trust store for user filter files (trust/untrust)
+  economics/            # Model pricing tiers, $ savings estimates (cc-economics)
+  hookaudit/            # Audit log of hook rewrite decisions (hook-audit)
+  inspect/              # Code quality checks on snip's own Go source
   tracking/             # SQLite token tracking (pure Go, no CGO)
   tee/                  # Raw output recovery on failure
   utils/                # Truncate, StripANSI, EstimateTokens, LazyRegex
@@ -121,5 +127,5 @@ git tag -a v0.1.1 -m "fix: description" && git push origin v0.1.1
 - Direct communication style — no hedging, state facts and solutions
 - TDD workflow: write test first, implement, refactor
 - Use context wrapping on errors: `fmt.Errorf("operation: %w", err)`
-- When adding a new built-in subcommand: add it to both the `switch` in `cli.go` AND `isBuiltInCommand` in `flags.go` (current builtins: init, gain, config, proxy, hook, discover)
+- When adding a new built-in subcommand: add it to both the `switch` in `cli.go` AND `isBuiltInCommand` in `flags.go` (the authoritative list of builtins)
 - When changing user-facing behavior, filters, or architecture: update the GitHub wiki (`git clone https://github.com/edouard-claude/snip.wiki.git`) to stay in sync
