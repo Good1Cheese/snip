@@ -1,6 +1,8 @@
 package filter
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +27,69 @@ on_error: "passthrough"
 	}
 	if f.Match.Command != "echo" {
 		t.Errorf("match.command = %q", f.Match.Command)
+	}
+}
+
+func TestParseFilterSubcommandScalarAndList(t *testing.T) {
+	scalar := `
+name: "legacy"
+match:
+  command: "npm"
+  subcommand: "install"
+pipeline: []
+`
+	f, err := ParseFilter([]byte(scalar))
+	if err != nil {
+		t.Fatalf("scalar syntax should parse: %v", err)
+	}
+	if !f.Match.Subcommand.IsPresent() || f.Match.Subcommand.String() != "install" {
+		t.Fatalf("scalar subcommand = present %v values %v", f.Match.Subcommand.IsPresent(), f.Match.Subcommand.Values())
+	}
+
+	list := `
+name: "multi"
+match:
+  command: "npm"
+  subcommand: ["install", "add", "i"]
+pipeline: []
+`
+	f, err = ParseFilter([]byte(list))
+	if err != nil {
+		t.Fatalf("list syntax should parse: %v", err)
+	}
+	if got := f.Match.Subcommand.Values(); len(got) != 3 || got[2] != "i" {
+		t.Fatalf("list subcommand values = %v", got)
+	}
+}
+
+func TestParseFilterRejectsEmptySubcommandList(t *testing.T) {
+	yaml := `
+name: "empty-list"
+match:
+  command: "npm"
+  subcommand: []
+pipeline: []
+`
+	_, err := ParseFilter([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for empty subcommand list")
+	}
+	if !strings.Contains(err.Error(), "match.subcommand") || !strings.Contains(err.Error(), "empty list") {
+		t.Fatalf("error = %v, want useful empty-list subcommand error", err)
+	}
+}
+
+func TestParseFilterExistingScalarFilterCompatibility(t *testing.T) {
+	data, err := os.ReadFile("../../filters/git-log.yaml")
+	if err != nil {
+		t.Fatalf("read git-log.yaml: %v", err)
+	}
+	f, err := ParseFilter(data)
+	if err != nil {
+		t.Fatalf("parse git-log.yaml: %v", err)
+	}
+	if f.Match.Command != "git" || f.Match.Subcommand.String() != "log" {
+		t.Fatalf("parsed match = %s %s", f.Match.Command, f.Match.Subcommand.String())
 	}
 }
 

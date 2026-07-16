@@ -334,6 +334,16 @@ pipeline:
 on_error: "passthrough"
 ```
 
+`match.subcommand` can be a scalar string (as above) or a list of exact subcommands:
+
+```yaml
+match:
+  command: "npm"
+  subcommand: ["install", "add", "i"]
+```
+
+If `subcommand` is omitted, the filter matches every subcommand for that command. To match only a bare command invocation, include an explicit empty string, for example `subcommand: ["", "install"]` to match `yarn` and `yarn install` without matching `yarn why`.
+
 ### 127 Built-in Filters
 
 snip ships with **127 declarative YAML filters** covering all major developer tools:

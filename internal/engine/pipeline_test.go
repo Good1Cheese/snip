@@ -269,7 +269,7 @@ func TestPipelineRunSilentWhenSiblingSubcommandHasFilter(t *testing.T) {
 	f := filter.Filter{
 		Name:    "true-foo",
 		Version: 1,
-		Match:   filter.Match{Command: "true", Subcommand: "foo"},
+		Match:   filter.Match{Command: "true", Subcommand: filter.NewSubcommand("foo")},
 		OnError: "passthrough",
 		Pipeline: filter.Pipeline{
 			{ActionName: "keep_lines", Params: map[string]any{"pattern": `.`}},

@@ -1,9 +1,37 @@
 name: "npm-install"
-version: 3
-description: "Condensed npm output: install summary and errors only"
+version: 4
+description: "Condensed npm dependency-change output: summary and errors only"
 
 match:
   command: "npm"
+  subcommand:
+    - "install"
+    - "add"
+    - "i"
+    - "in"
+    - "ins"
+    - "inst"
+    - "insta"
+    - "instal"
+    - "isnt"
+    - "isnta"
+    - "isntal"
+    - "isntall"
+    - "ci"
+    - "clean-install"
+    - "ic"
+    - "install-clean"
+    - "isntall-clean"
+    - "update"
+    - "up"
+    - "upgrade"
+    - "udpate"
+    - "uninstall"
+    - "unlink"
+    - "remove"
+    - "rm"
+    - "r"
+    - "un"
   exclude_flags: ["--version", "-v"]
 
 streams:

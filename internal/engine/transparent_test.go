@@ -13,7 +13,7 @@ import (
 // prefixes and a custom single-word user prefix "myrunner".
 func transparentTestPipeline() *Pipeline {
 	filters := []filter.Filter{
-		{Name: "git-log", Match: filter.Match{Command: "git", Subcommand: "log"}},
+		{Name: "git-log", Match: filter.Match{Command: "git", Subcommand: filter.NewSubcommand("log")}},
 		{Name: "pytest", Match: filter.Match{Command: "pytest"}},
 	}
 	return &Pipeline{
@@ -47,17 +47,17 @@ func TestUnwrapTransparent(t *testing.T) {
 		wantRunner    []string
 	}{
 		{
-			name: "uv run with inner subcommand and args",
+			name:    "uv run with inner subcommand and args",
 			command: "uv", args: []string{"run", "git", "log", "-5"},
 			wantOK: true, wantInner: "git", wantInnerArgs: []string{"log", "-5"}, wantRunner: []string{"run"},
 		},
 		{
-			name: "uv run skips value-taking flag and its value",
+			name:    "uv run skips value-taking flag and its value",
 			command: "uv", args: []string{"run", "--python", "3.12", "pytest"},
 			wantOK: true, wantInner: "pytest", wantInnerArgs: nil, wantRunner: []string{"run", "--python", "3.12"},
 		},
 		{
-			name: "uv run handles flag=value form",
+			name:    "uv run handles flag=value form",
 			command: "uv", args: []string{"run", "--python=3.12", "pytest", "-x"},
 			wantOK: true, wantInner: "pytest", wantInnerArgs: []string{"-x"}, wantRunner: []string{"run", "--python=3.12"},
 		},
@@ -67,32 +67,32 @@ func TestUnwrapTransparent(t *testing.T) {
 			// noglob/nocorrect/command are shell builtins: exec is intercepted by
 			// unproxyableReason before the pipeline, and the others aren't real
 			// binaries, so a custom prefix is the realistic single-word case.)
-			name: "single-word prefix puts inner at args[0]",
+			name:    "single-word prefix puts inner at args[0]",
 			command: "myrunner", args: []string{"git", "log"},
 			wantOK: true, wantInner: "git", wantInnerArgs: []string{"log"}, wantRunner: []string{},
 		},
 		{
-			name: "path-qualified runner still matches by base name",
+			name:    "path-qualified runner still matches by base name",
 			command: "/usr/local/bin/uv", args: []string{"run", "git", "log"},
 			wantOK: true, wantInner: "git", wantInnerArgs: []string{"log"}, wantRunner: []string{"run"},
 		},
 		{
-			name: "unknown inner command fails closed",
+			name:    "unknown inner command fails closed",
 			command: "uv", args: []string{"run", "unknowncmd", "x"},
 			wantOK: false,
 		},
 		{
-			name: "flag before inner on a non-skip prefix fails closed",
+			name:    "flag before inner on a non-skip prefix fails closed",
 			command: "command", args: []string{"-v", "git"},
 			wantOK: false,
 		},
 		{
-			name: "no transparent prefix",
+			name:    "no transparent prefix",
 			command: "git", args: []string{"log"},
 			wantOK: false,
 		},
 		{
-			name: "prefix alone with no inner command",
+			name:    "prefix alone with no inner command",
 			command: "uv", args: []string{"run"},
 			wantOK: false,
 		},
@@ -124,7 +124,7 @@ func TestUnwrapTransparent(t *testing.T) {
 // no transparent prefixes are configured.
 func TestUnwrapTransparentDisabledWhenNoPrefixes(t *testing.T) {
 	p := &Pipeline{
-		Registry:            filter.NewRegistry([]filter.Filter{{Name: "git-log", Match: filter.Match{Command: "git", Subcommand: "log"}}}),
+		Registry:            filter.NewRegistry([]filter.Filter{{Name: "git-log", Match: filter.Match{Command: "git", Subcommand: filter.NewSubcommand("log")}}}),
 		TransparentPrefixes: nil,
 	}
 	if _, _, _, ok := p.unwrapTransparent("uv", []string{"run", "git", "log"}); ok {

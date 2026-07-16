@@ -1,9 +1,20 @@
 name: "pnpm-install"
-version: 2
-description: "Condensed pnpm output: install summary and errors"
+version: 3
+description: "Condensed pnpm dependency-change output: summary and errors"
 
 match:
   command: "pnpm"
+  subcommand:
+    - "install"
+    - "i"
+    - "add"
+    - "update"
+    - "up"
+    - "upgrade"
+    - "remove"
+    - "rm"
+    - "uninstall"
+    - "un"
 
 streams:
   - stdout
@@ -20,3 +31,25 @@ pipeline:
     overflow_msg: "... more output truncated"
 
 on_error: "passthrough"
+
+tests:
+  - name: "successful install"
+    input: |
+      Progress: resolved 1, reused 0, downloaded 0, added 0
+      +++
+      Progress: resolved 245, reused 200, downloaded 45, added 245, done
+
+      dependencies:
+      + react 19.0.0
+
+      Done in 12s
+    expected: |
+      dependencies:
+      + react 19.0.0
+      Done in 12s
+  - name: "install error"
+    input: |
+      Progress: resolved 1, reused 0, downloaded 0, added 0
+      ERR_PNPM_NO_MATCHING_VERSION No matching version found for missing@1.0.0
+    expected: |
+      ERR_PNPM_NO_MATCHING_VERSION No matching version found for missing@1.0.0

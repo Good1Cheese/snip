@@ -58,11 +58,108 @@ func TestGhPrDiffNotCondensed(t *testing.T) {
 	}
 }
 
+func TestPackageManagerInstallFiltersScopedToDependencyChangingCommands(t *testing.T) {
+	files := []string{"npm-install.yaml", "pnpm-install.yaml", "yarn-install.yaml"}
+	filters := make([]Filter, 0, len(files))
+	for _, file := range files {
+		data, err := os.ReadFile("../../filters/" + file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		f, err := ParseFilter(data)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		filters = append(filters, *f)
+	}
+	reg := NewRegistry(filters)
+
+	tests := []struct {
+		command    string
+		subcommand string
+		want       string
+	}{
+		{"npm", "install", "npm-install"},
+		{"npm", "add", "npm-install"},
+		{"npm", "i", "npm-install"},
+		{"npm", "in", "npm-install"},
+		{"npm", "ins", "npm-install"},
+		{"npm", "inst", "npm-install"},
+		{"npm", "insta", "npm-install"},
+		{"npm", "instal", "npm-install"},
+		{"npm", "isnt", "npm-install"},
+		{"npm", "isnta", "npm-install"},
+		{"npm", "isntal", "npm-install"},
+		{"npm", "isntall", "npm-install"},
+		{"npm", "ci", "npm-install"},
+		{"npm", "clean-install", "npm-install"},
+		{"npm", "ic", "npm-install"},
+		{"npm", "install-clean", "npm-install"},
+		{"npm", "isntall-clean", "npm-install"},
+		{"npm", "update", "npm-install"},
+		{"npm", "up", "npm-install"},
+		{"npm", "upgrade", "npm-install"},
+		{"npm", "udpate", "npm-install"},
+		{"npm", "uninstall", "npm-install"},
+		{"npm", "unlink", "npm-install"},
+		{"npm", "remove", "npm-install"},
+		{"npm", "rm", "npm-install"},
+		{"npm", "r", "npm-install"},
+		{"npm", "un", "npm-install"},
+		{"pnpm", "install", "pnpm-install"},
+		{"pnpm", "i", "pnpm-install"},
+		{"pnpm", "add", "pnpm-install"},
+		{"pnpm", "update", "pnpm-install"},
+		{"pnpm", "up", "pnpm-install"},
+		{"pnpm", "upgrade", "pnpm-install"},
+		{"pnpm", "remove", "pnpm-install"},
+		{"pnpm", "rm", "pnpm-install"},
+		{"pnpm", "uninstall", "pnpm-install"},
+		{"pnpm", "un", "pnpm-install"},
+		{"yarn", "", "yarn-install"},
+		{"yarn", "install", "yarn-install"},
+		{"yarn", "add", "yarn-install"},
+		{"yarn", "remove", "yarn-install"},
+		{"yarn", "up", "yarn-install"},
+		{"yarn", "upgrade", "yarn-install"},
+		{"yarn", "upgrade-interactive", "yarn-install"},
+		{"npm", "view", ""},
+		{"npm", "info", ""},
+		{"npm", "search", ""},
+		{"npm", "ls", ""},
+		{"npm", "outdated", ""},
+		{"npm", "u", ""},
+		{"pnpm", "list", ""},
+		{"pnpm", "outdated", ""},
+		{"yarn", "why", ""},
+		{"yarn", "info", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command+" "+tt.subcommand, func(t *testing.T) {
+			got := reg.Match(tt.command, tt.subcommand, nil)
+			if tt.want == "" {
+				if got != nil {
+					t.Fatalf("expected no install filter match, got %q", got.Name)
+				}
+				return
+			}
+			if got == nil || got.Name != tt.want {
+				t.Fatalf("got %v, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func makeFilter(name, cmd, subcmd string) Filter {
+	match := Match{Command: cmd}
+	if subcmd != "" {
+		match.Subcommand = NewSubcommand(subcmd)
+	}
 	return Filter{
 		Name:    name,
 		Version: 1,
-		Match:   Match{Command: cmd, Subcommand: subcmd},
+		Match:   match,
 		OnError: "passthrough",
 	}
 }
@@ -109,11 +206,90 @@ func TestRegistryMatch(t *testing.T) {
 	}
 }
 
+func TestRegistryMatchMultiSubcommands(t *testing.T) {
+	reg := NewRegistry([]Filter{{
+		Name:    "npm-install",
+		Version: 1,
+		Match:   Match{Command: "npm", Subcommand: NewSubcommands("install", "add", "i")},
+		OnError: "passthrough",
+	}})
+
+	for _, subcommand := range []string{"install", "add", "i"} {
+		if got := reg.Match("npm", subcommand, nil); got == nil || got.Name != "npm-install" {
+			t.Errorf("npm %s should match npm-install, got %v", subcommand, got)
+		}
+		if !reg.HasAnyFilter("npm", subcommand) {
+			t.Errorf("HasAnyFilter should find npm %s", subcommand)
+		}
+	}
+	for _, subcommand := range []string{"view", "run", ""} {
+		if got := reg.Match("npm", subcommand, nil); got != nil {
+			t.Errorf("npm %q should not match install filter, got %q", subcommand, got.Name)
+		}
+	}
+}
+
+func TestRegistryMatchExplicitBareSubcommand(t *testing.T) {
+	reg := NewRegistry([]Filter{{
+		Name:    "yarn-install",
+		Version: 1,
+		Match:   Match{Command: "yarn", Subcommand: NewSubcommands("", "install", "add")},
+		OnError: "passthrough",
+	}})
+
+	if got := reg.Match("yarn", "", nil); got == nil || got.Name != "yarn-install" {
+		t.Fatalf("bare yarn should match yarn-install, got %v", got)
+	}
+	if !reg.HasAnyFilter("yarn", "") {
+		t.Error("HasAnyFilter should find explicit bare yarn filter")
+	}
+	if got := reg.Match("yarn", "why", []string{"react"}); got != nil {
+		t.Fatalf("yarn why must not match bare/install filter, got %q", got.Name)
+	}
+	if reg.HasAnyFilter("yarn", "why") {
+		t.Fatal("HasAnyFilter must not find yarn why through explicit bare key")
+	}
+}
+
+func TestRegistryOmittedSubcommandIsWildcard(t *testing.T) {
+	reg := NewRegistry([]Filter{{
+		Name:    "legacy-npm",
+		Version: 1,
+		Match:   Match{Command: "npm"},
+		OnError: "passthrough",
+	}})
+
+	for _, subcommand := range []string{"", "install", "view"} {
+		if got := reg.Match("npm", subcommand, nil); got == nil || got.Name != "legacy-npm" {
+			t.Errorf("omitted subcommand should match npm %q, got %v", subcommand, got)
+		}
+	}
+}
+
+func TestRegistryExactSubcommandExcludeFlags(t *testing.T) {
+	reg := NewRegistry([]Filter{{
+		Name:    "npm-install",
+		Version: 1,
+		Match:   Match{Command: "npm", Subcommand: NewSubcommands("install", "i"), ExcludeFlags: []string{"--version", "-v"}},
+		OnError: "passthrough",
+	}})
+
+	if got := reg.Match("npm", "i", []string{"left-pad"}); got == nil || got.Name != "npm-install" {
+		t.Fatalf("npm i should match without excluded flags, got %v", got)
+	}
+	if got := reg.Match("npm", "i", []string{"--version"}); got != nil {
+		t.Fatalf("npm i --version should be excluded, got %q", got.Name)
+	}
+	if !reg.HasAnyFilter("npm", "i") {
+		t.Fatal("HasAnyFilter should still report exact filter despite excluded flags")
+	}
+}
+
 func TestRegistryMatchExcludeFlags(t *testing.T) {
 	f := Filter{
 		Name:    "git-log",
 		Version: 1,
-		Match:   Match{Command: "git", Subcommand: "log", ExcludeFlags: []string{"--format", "--pretty"}},
+		Match:   Match{Command: "git", Subcommand: NewSubcommand("log"), ExcludeFlags: []string{"--format", "--pretty"}},
 		OnError: "passthrough",
 	}
 	reg := NewRegistry([]Filter{f})
@@ -184,7 +360,7 @@ func TestHasAnyFilter(t *testing.T) {
 	f := Filter{
 		Name:    "go-test",
 		Version: 1,
-		Match:   Match{Command: "go", Subcommand: "test", ExcludeFlags: []string{"-v"}},
+		Match:   Match{Command: "go", Subcommand: NewSubcommand("test"), ExcludeFlags: []string{"-v"}},
 		OnError: "passthrough",
 	}
 	reg := NewRegistry([]Filter{f})
@@ -238,8 +414,8 @@ func TestHasAnyFilterForCommand(t *testing.T) {
 	// so that running "git checkout" doesn't print the misleading
 	// "no filter for git" hint.
 	filters := []Filter{
-		{Name: "git-add", Version: 1, Match: Match{Command: "git", Subcommand: "add"}, OnError: "passthrough"},
-		{Name: "git-commit", Version: 1, Match: Match{Command: "git", Subcommand: "commit"}, OnError: "passthrough"},
+		{Name: "git-add", Version: 1, Match: Match{Command: "git", Subcommand: NewSubcommand("add")}, OnError: "passthrough"},
+		{Name: "git-commit", Version: 1, Match: Match{Command: "git", Subcommand: NewSubcommand("commit")}, OnError: "passthrough"},
 	}
 	reg := NewRegistry(filters)
 
