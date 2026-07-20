@@ -42,9 +42,38 @@ func TestRewriteCommand(t *testing.T) {
 			allKnown: false,
 		},
 		{
-			name:     "pipe tail blocks allow",
+			// A producer whose output feeds a pipe stage is left raw (#111): its
+			// exact count/content must reach the consumer unmodified.
+			name:     "pipe tail leaves producer raw",
 			cmd:      "git log | grep fix",
-			want:     `"/usr/local/bin/snip" run -- git log | grep fix`,
+			want:     "git log | grep fix",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A producer redirected to a file is left raw (#111): the file must
+			// receive the real output, not snip's compacted view.
+			name:     "redirect leaves producer raw",
+			cmd:      "git log > out.txt",
+			want:     "git log > out.txt",
+			changed:  false,
+			allKnown: true,
+		},
+		{
+			// A raw redirected producer must not block auto-allow of a wrapped,
+			// known sibling group (#111): both git and go are attested.
+			name:     "redirect with known sibling still allowed",
+			cmd:      "git log > out.txt && go test ./...",
+			want:     `git log > out.txt && "/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
+			allKnown: true,
+		},
+		{
+			// A piped producer stays raw while a known non-pipe sibling is still
+			// wrapped; the uninspected pipe tail keeps auto-allow off (#88/#111).
+			name:     "piped producer raw but known sibling wrapped",
+			cmd:      "git log | grep x && go test ./...",
+			want:     `git log | grep x && "/usr/local/bin/snip" run -- go test ./...`,
 			changed:  true,
 			allKnown: false,
 		},
