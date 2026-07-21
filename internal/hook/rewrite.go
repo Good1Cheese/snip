@@ -24,10 +24,12 @@ type RewriteResult struct {
 // rewrite so token savings are preserved across compound commands.
 //
 // cmd is split on top-level ';', '&&', '||', '&' and newline boundaries (quoted
-// regions are respected). Within each resulting group only the first pipeline
-// stage (the text before the first top-level '|') is eligible for rewriting,
-// matching snip's line-by-line stream-filtering model: snip filters the
-// producer, later pipe stages consume the filtered output untouched.
+// regions are respected). Within each resulting group the head command is
+// wrapped only when its stdout is read directly by the LLM. A head whose output
+// feeds a downstream consumer — a pipe stage or a file redirection ('>') — is
+// left raw, because snip's lossy compaction (path compaction, line truncation,
+// match caps, dedup, reformatting) would silently corrupt the exact count and
+// content that consumer depends on (issue #111).
 //
 // The caller must reject commands containing unverifiable constructs
 // (HasUnverifiableConstruct) before calling this, so cmd here is free of command
@@ -118,6 +120,15 @@ func rewriteGroup(group string, cmdSet map[string]struct{}, prefixes []Transpare
 	head, tail := splitFirstPipe(group)
 	hasTail = strings.TrimSpace(tail) != ""
 
+	// A head whose stdout feeds a downstream consumer must not be wrapped: snip's
+	// lossy compaction (compact_path, truncate_lines, head caps, dedup,
+	// reformatting) is only safe when the LLM reads the output directly. A pipe
+	// stage or a file redirection consumes the producer's exact count and
+	// content, so wrapping would silently corrupt it (issue #111). splitFirstPipe
+	// detects the pipe; hasTopLevelRedirect detects '>' (covering '>', '>>', '2>',
+	// '&>'). For the pipe case hasTail also keeps the #88 no-auto-allow guard.
+	feedsConsumer := hasTail || hasTopLevelRedirect(head)
+
 	prefix, envVars, bareCmd := ParseSegment(head)
 	base := BaseCommand(bareCmd)
 	if base == "" {
@@ -140,6 +151,12 @@ func rewriteGroup(group string, cmdSet map[string]struct{}, prefixes []Transpare
 	// (e.g. "uv run bash -c ...") is never rewritten here and never auto-allowed.
 	if tp, rest, ok := matchTransparentPrefix(bareCmd, prefixes); ok {
 		if before, _, found := LocateInner(rest, cmdSet, tp.ValueFlags, tp.SkipFlags); found {
+			// Known inner command, but leave the group raw when its output feeds a
+			// consumer (issue #111). headKnown stays true so a redirected-but-known
+			// producer does not needlessly block auto-allow of sibling groups.
+			if feedsConsumer {
+				return group, true, hasTail
+			}
 			wrappedHead := prefix + envVars + tp.Prefix + " " + before + quotedBin + " run -- " + rest[len(before):]
 			return wrappedHead + tail, true, hasTail
 		}
@@ -147,6 +164,11 @@ func rewriteGroup(group string, cmdSet map[string]struct{}, prefixes []Transpare
 
 	if _, ok := cmdSet[base]; !ok {
 		return group, false, hasTail
+	}
+
+	// Known producer feeding a downstream consumer: leave raw (issue #111).
+	if feedsConsumer {
+		return group, true, hasTail
 	}
 
 	wrappedHead := prefix + envVars + quotedBin + " run -- " + bareCmd
@@ -180,6 +202,38 @@ func splitFirstPipe(group string) (head, tail string) {
 		}
 	}
 	return group, ""
+}
+
+// hasTopLevelRedirect reports whether group contains an unquoted output
+// redirection ('>'), i.e. the producer's stdout/stderr is written to a file
+// rather than read by the LLM. Any top-level '>' counts, covering '>', '>>',
+// '2>', '&>' and '>&'. snip fails safe here: an over-detection only forgoes
+// compaction, whereas a miss would silently corrupt the redirected file
+// (issue #111). '<' (stdin) is ignored — it never affects the filtered stdout.
+func hasTopLevelRedirect(group string) bool {
+	var quote byte
+	for i := 0; i < len(group); i++ {
+		ch := group[i]
+		if quote != 0 {
+			if ch == '\\' && quote == '"' && i+1 < len(group) {
+				i++
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'':
+			quote = '\''
+		case '"':
+			quote = '"'
+		case '>':
+			return true
+		}
+	}
+	return false
 }
 
 // firstBase returns the base command of cmd's first segment, used for audit
