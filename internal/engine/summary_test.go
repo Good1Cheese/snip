@@ -23,10 +23,10 @@ func TestBuildSummaryLineInjectionOnly(t *testing.T) {
 func TestBuildSummaryLinePipelineOnly(t *testing.T) {
 	got := BuildSummaryLine(SummaryInfo{
 		FilterName:    "find",
-		FilterVersion: 1,
-		PipelineNames: []string{"compact_path", "head"},
+		FilterVersion: 2,
+		PipelineNames: []string{"truncate_lines", "head"},
 	})
-	want := "[snip: find v1 | compact_path>head]"
+	want := "[snip: find v2 | truncate_lines>head]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
