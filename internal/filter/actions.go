@@ -157,7 +157,12 @@ func truncateBytes(input ActionResult, params map[string]any) (ActionResult, err
 	for cut > 0 && !utf8.RuneStart(joined[cut]) {
 		cut--
 	}
-	input.Lines = strings.Split(joined[:cut], "\n")
+	msg := getStr(params, "overflow_msg")
+	if msg == "" {
+		msg = fmt.Sprintf("... truncated at %d bytes", max)
+	}
+	// Split allocates a fresh slice, so the append never aliases input.Lines.
+	input.Lines = append(strings.Split(joined[:cut], "\n"), msg)
 	return input, nil
 }
 
@@ -190,9 +195,14 @@ func tail(input ActionResult, params map[string]any) (ActionResult, error) {
 	if len(input.Lines) <= n {
 		return input, nil
 	}
-	start := len(input.Lines) - n
-	out := make([]string, n)
-	copy(out, input.Lines[start:])
+	dropped := len(input.Lines) - n
+	msg := getStr(params, "overflow_msg")
+	if msg == "" {
+		msg = fmt.Sprintf("+%d earlier lines", dropped)
+	}
+	out := make([]string, 0, n+1)
+	out = append(out, msg)
+	out = append(out, input.Lines[dropped:]...)
 	return ActionResult{Lines: out, Metadata: input.Metadata}, nil
 }
 

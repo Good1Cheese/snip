@@ -64,7 +64,7 @@ on_error: "passthrough"          # What to do if the pipeline fails: "passthroug
 | `keep_lines` | `pattern` (regex) | Keep only lines matching the pattern |
 | `remove_lines` | `pattern` (regex) | Remove lines matching the pattern |
 | `head` | `n` (int, default 10), `overflow_msg` (string, default "+{remaining} more lines") | Keep first N lines |
-| `tail` | `n` (int, default 10) | Keep last N lines |
+| `tail` | `n` (int, default 10), `overflow_msg` (string, default "+{dropped} earlier lines") | Keep last N lines |
 | `dedup` | `normalize` ([]string of regexes to strip before comparing), `top` (int, 0=all) | Deduplicate lines, output "text (xN)" for repeats |
 
 ### Line Transformation

@@ -75,8 +75,8 @@ func TestTruncateBytesUTF8Boundary(t *testing.T) {
 	if !utf8.ValidString(out) {
 		t.Errorf("truncated output is not valid UTF-8: %q (% x)", out, out)
 	}
-	if out != "h" {
-		t.Errorf("got %q, want %q", out, "h")
+	if res.Lines[0] != "h" {
+		t.Errorf("got %q, want %q", res.Lines[0], "h")
 	}
 }
 
@@ -102,8 +102,42 @@ func TestTruncateBytesEmoji(t *testing.T) {
 	if !utf8.ValidString(out) {
 		t.Errorf("truncated output is not valid UTF-8: %q (% x)", out, out)
 	}
-	if out != "ab" {
-		t.Errorf("got %q, want %q", out, "ab")
+	if res.Lines[0] != "ab" {
+		t.Errorf("got %q, want %q", res.Lines[0], "ab")
+	}
+}
+
+func TestTruncateBytesMarker(t *testing.T) {
+	original := []string{"aaaaaaaaaa", "bbbbbbbbbb"}
+	input := ActionResult{Lines: original, Metadata: nil}
+	res, err := truncateBytes(input, map[string]any{"max": 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The kept bytes come first, the marker last.
+	want := []string{"aaaaa", "... truncated at 5 bytes"}
+	if len(res.Lines) != len(want) {
+		t.Fatalf("got %v, want %v", res.Lines, want)
+	}
+	for i := range want {
+		if res.Lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, res.Lines[i], want[i])
+		}
+	}
+	// Appending the marker must not write into the caller's backing array.
+	if original[1] != "bbbbbbbbbb" {
+		t.Errorf("input slice mutated: %v", original)
+	}
+}
+
+func TestTruncateBytesCustomOverflowMsg(t *testing.T) {
+	input := lines("aaaaaaaaaa", "bbbbbbbbbb")
+	res, err := truncateBytes(input, map[string]any{"max": 5, "overflow_msg": "[cut]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Lines[len(res.Lines)-1] != "[cut]" {
+		t.Errorf("custom overflow msg: %v", res.Lines)
 	}
 }
 
@@ -150,11 +184,37 @@ func TestTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Lines) != 2 {
-		t.Errorf("got %d lines, want 2", len(res.Lines))
+	// overflow message + 2 lines
+	if len(res.Lines) != 3 {
+		t.Errorf("got %d lines, want 3", len(res.Lines))
 	}
-	if res.Lines[0] != "4" || res.Lines[1] != "5" {
+	if !strings.Contains(res.Lines[0], "+3 earlier") {
+		t.Errorf("overflow msg: %q", res.Lines[0])
+	}
+	if res.Lines[1] != "4" || res.Lines[2] != "5" {
 		t.Errorf("got %v", res.Lines)
+	}
+}
+
+func TestTailNoOverflow(t *testing.T) {
+	input := lines("1", "2", "3")
+	res, err := tail(input, map[string]any{"n": 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Lines) != 3 {
+		t.Errorf("got %d lines, want 3", len(res.Lines))
+	}
+}
+
+func TestTailCustomOverflowMsg(t *testing.T) {
+	input := lines("1", "2", "3", "4", "5")
+	res, err := tail(input, map[string]any{"n": 2, "overflow_msg": "[...]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Lines[0] != "[...]" {
+		t.Errorf("custom overflow msg: %q", res.Lines[0])
 	}
 }
 
