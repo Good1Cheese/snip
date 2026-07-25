@@ -1,5 +1,5 @@
 name: "pytest"
-version: 3
+version: 4
 description: "Condensed pytest output: failures with locations and summary line"
 
 match:
@@ -35,8 +35,6 @@ pipeline:
   - action: "replace"
     pattern: "^=+ | =+$"
     replacement: ""
-  # Shorten paths
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

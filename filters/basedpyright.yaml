@@ -1,5 +1,5 @@
 name: "basedpyright"
-version: 1
+version: 2
 description: "Condensed basedpyright output: type errors"
 
 match:
@@ -16,7 +16,6 @@ pipeline:
     pattern: "^\\s*$"
   - action: "keep_lines"
     pattern: "(error|warning|information|\\d+ errors?|\\d+ warnings?|\\d+ information)"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

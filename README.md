@@ -388,10 +388,16 @@ Run `snip discover` to see which of your commands already have filters.
 | `state_machine` | Multi-state line processing |
 | `aggregate` | Count pattern matches |
 | `format_template` | Go template formatting |
-| `compact_path` | Shorten file paths |
+| `compact_path` | Shorten file paths (see caveat below) |
 | `replace` | Regex find and replace |
 | `match_output` | Conditional short-circuit (return message if pattern matches) |
 | `on_empty` | Return message if output is empty |
+
+> **`compact_path` emits paths that may not resolve.** It strips a leading
+> `src/`, `lib/`, `internal/`, `pkg/` or `vendor/` segment unconditionally and
+> with no marker, so `internal/soak/report.go` becomes `soak/report.go` — which
+> `ENOENT`s from the directory the command ran in. No bundled filter uses it.
+> Reach for it only when the path is display-only and will never be opened.
 
 ### Custom Filters
 
