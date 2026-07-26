@@ -11,11 +11,12 @@ import "strings"
 type blockKind uint8
 
 const (
-	// blockParen is an unquoted '(' that does not open a subshell: an array
-	// assignment ("arr=(a b)"), an arithmetic command ("((x = 1))"), an extglob
-	// pattern. It is pushed only so its matching ')' is consumed and cannot be
-	// mistaken for the close of an enclosing subshell. It is not a block, so it
-	// never suppresses rewriting.
+	// blockParen is an unquoted '(' that does not open a subshell because it is
+	// not in command position: an array assignment ("arr=(a b)"), an extglob
+	// pattern ("@(a|b)"), or the inner parens of an arithmetic command
+	// ("((x = 1))"). It is pushed only so its matching ')' is consumed and
+	// cannot be mistaken for the close of an enclosing subshell. It is not a
+	// block, so it never suppresses rewriting.
 	blockParen blockKind = iota
 	blockSubshell
 	blockBrace // { ... } group or function body
@@ -34,19 +35,44 @@ const (
 // the body — never protected the body. It was wrapped, and the consumer read
 // snip's compacted view instead of the real output (issue #133, bug A).
 //
-// The rule is one sentence: nothing inside a block is ever rewritten. It is a
-// stack over machinery that already exists, not a shell parser, and every
-// misdetection costs filtering rather than correctness — an unmatched opener
-// pins the scope open and the remainder is simply passed through raw. Consumer
-// propagation (resolving which block a trailing pipe belongs to and rewriting
-// the bodies that have no consumer) would recover more savings, but its failure
-// mode is wrong output, not lost savings, and this hook path prefers the
-// opposite trade (see the #127 process-substitution fix).
+// The rule the code implements is: nothing inside a block it detects is ever
+// rewritten. It is a stack over machinery that already exists, not a shell
+// parser, so the honest contract is narrower than that sentence alone:
+//
+//   - What opens a block: the reserved words `if`, `while`, `until`, `for`,
+//     `select` and `case`; a '{' standing alone as a word in command position
+//     (which is how a function body opens, both `NAME() {` and `function NAME {`
+//     — the header only puts that '{' in command position); and a '(' in command
+//     position, whatever follows it (`((` is arithmetic and pushes no block).
+//     What closes one: `fi`, `done`, `esac`, a '}' in command position, and the
+//     ')' matching a '(' — recognised where it occurs, not only at the end of a
+//     group, and never on a case-arm pattern ("  a )"). Reserved words count
+//     only in command position and comments are skipped whole, so neither
+//     `echo done` nor `# done` closes anything.
+//   - A missed opener costs correctness, not just savings: the body is rewritten
+//     and a consumer of the block reads snip's compacted output. Every opener
+//     above is therefore matched on the shell's own rule (command position),
+//     never on a heuristic about what follows it.
+//   - A spurious opener, and any unmatched opener, costs filtering only: the
+//     scope stays open and the remainder of the command is passed through raw.
+//     `closeKeyword` bounds that to the enclosing block by dropping stray
+//     blockParen entries, so one malformed group cannot disable filtering for
+//     the whole message.
+//   - Not covered, by construction: line continuations (a trailing backslash is
+//     a group boundary here but not for the shell), and consumer propagation —
+//     deciding that a block's output has no consumer and rewriting its body
+//     anyway. The latter is why `(cd sub && go test ./...)` is no longer
+//     filtered: resolving which block a trailing pipe belongs to fails towards
+//     wrong output, and this hook path prefers the opposite trade (see the #127
+//     process-substitution fix).
 type blockScope struct {
 	stack []blockKind
 	// blocks is the number of stack entries that are not blockParen, i.e. how
 	// many real compound commands are open.
 	blocks int
+	// funcName is set between the `function` reserved word and the name that
+	// follows it, so the '{' after the name is still seen in command position.
+	funcName bool
 }
 
 // inBlock reports whether the group being flushed sits inside a compound
@@ -116,6 +142,19 @@ func (s *blockScope) advance(group string) {
 			// '&' here belongs to a form like "2>&1".
 			i++
 			cmdPos = false
+		case '#':
+			if !isWordStart(group, i) {
+				// Not a comment: '#' can follow a quoted region inside one word
+				// (`"x"#y`). The only way to land here is just past a closing
+				// quote, which already cleared cmdPos.
+				i++
+				continue
+			}
+			// A comment runs to the end of the line and holds no command, so no
+			// reserved word in it may open or close a block. The segmenter ends
+			// the group at that newline (a ';' inside a comment is not a
+			// boundary), so the comment always runs to the end of the group.
+			return
 		case '(':
 			i, cmdPos = s.openParen(group, i, cmdPos)
 		case ')':
@@ -162,15 +201,10 @@ func (s *blockScope) advance(group string) {
 // openParen handles an unquoted '(' and returns the next index and the command
 // position that follows it.
 func (s *blockScope) openParen(group string, i int, cmdPos bool) (int, bool) {
-	// A subshell only when '(' stands alone as a word, so "(cd sub && go test
-	// ./...)" and "((x = 1))" are not read as subshell openers and keep being
-	// filtered exactly as on master.
-	if cmdPos && (i+1 >= len(group) || isTokenBreak(group[i+1])) {
-		s.push(blockSubshell)
-		return i + 1, true
-	}
-	// "name()" — a function header. The body's '{' that follows is in command
-	// position even though a word ("deploy") came before it.
+	// "name()" / "function name ()" — a function header. The body's '{' that
+	// follows is in command position even though a word (the name) came before
+	// it. An empty "()" is never a subshell: the shell rejects "( )" as a syntax
+	// error, so this check is safe in command position too.
 	j := i + 1
 	for j < len(group) && (group[j] == ' ' || group[j] == '\t') {
 		j++
@@ -178,6 +212,26 @@ func (s *blockScope) openParen(group string, i int, cmdPos bool) (int, bool) {
 	if j < len(group) && group[j] == ')' {
 		return j + 1, true
 	}
+
+	if cmdPos {
+		// "((expr))" is an arithmetic command, not a subshell: the two parens
+		// are pushed as plain parens so the matching "))" consumes them without
+		// ever suppressing rewriting. Bash tells the two apart by adjacency, so
+		// "( (a) )" below is still nested subshells.
+		if i+1 < len(group) && group[i+1] == '(' {
+			s.push(blockParen)
+			s.push(blockParen)
+			return i + 2, false
+		}
+		// Every other '(' in command position opens a subshell, whatever
+		// follows it. Requiring '(' to stand alone as a word missed
+		// "(cd sub && go test ./...; echo x) | wc -l": the subshell spans three
+		// groups, the `go test` group has no consumer of its own, and it was
+		// wrapped while `wc -l` counted the whole subshell.
+		s.push(blockSubshell)
+		return i + 1, true
+	}
+
 	s.push(blockParen)
 	return i + 1, false
 }
@@ -189,7 +243,18 @@ func (s *blockScope) classify(word string, cmdPos bool) bool {
 	if !cmdPos {
 		return false
 	}
+	if s.funcName {
+		// The word after `function` is the name being defined, not a command.
+		// The body's '{' comes right after it and must be seen in command
+		// position, otherwise `function findall {` opens nothing and the body
+		// is rewritten (the ksh/bash spelling of `findall() {`).
+		s.funcName = false
+		return true
+	}
 	switch word {
+	case "function":
+		s.funcName = true
+		return true
 	case "if":
 		s.push(blockCond)
 		return true // "if grep -q x f": a command follows

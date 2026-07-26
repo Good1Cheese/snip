@@ -173,20 +173,46 @@ func TestRewriteBlockScope(t *testing.T) {
 			allKnown: false,
 		},
 		{
-			// One-line subshell: `(` is only an opener as a standalone word, so
-			// this keeps behaving exactly as on master (the trailing group is
-			// still guarded by the existing per-group #111 check).
-			name:     "one line subshell still filtered",
+			// A '(' in command position opens a subshell whatever follows it, so
+			// the body is raw even on one line. Wrapping it was safe only while
+			// the whole subshell fitted in ONE group: the previous rule read
+			// "(cd sub" as a non-opener and relied on the per-group #111 check,
+			// which the next case defeats with a single ';'. The cost is real —
+			// this shape is no longer filtered — and it is the price of never
+			// feeding a consumer snip's compacted output.
+			name:     "one line subshell stays raw",
 			cmd:      "(cd sub && go test ./...)",
-			want:     `(cd sub && "/usr/local/bin/snip" run -- go test ./...)`,
-			changed:  true,
+			want:     "(cd sub && go test ./...)",
+			changed:  false,
 			allKnown: false,
 		},
 		{
-			name:     "one line subshell piped stays raw",
-			cmd:      "(cd sub && go test ./...) | wc -l",
-			want:     "(cd sub && go test ./...) | wc -l",
+			// The gap the old "one line subshell piped stays raw" case hid: with
+			// a ';' inside the parens the subshell spans three groups, the
+			// `go test` group has no pipe of its own, and the per-group #111
+			// check cannot see the `| wc -l` that consumes the whole subshell.
+			// Raw prints 61 lines, the wrapped form printed 52.
+			name:     "one line subshell with an inner semicolon piped stays raw",
+			cmd:      "(cd sub && go test ./...; echo x) | wc -l",
+			want:     "(cd sub && go test ./...; echo x) | wc -l",
 			changed:  false,
+			allKnown: false,
+		},
+		{
+			name:     "one line subshell with an inner semicolon redirected stays raw",
+			cmd:      "(cd sub && grep -c x f; echo x) > out.txt",
+			want:     "(cd sub && grep -c x f; echo x) > out.txt",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// The subshell closes where its ')' is, so a sibling command after it
+			// is filtered again: the blast radius is the subshell, not the rest
+			// of the message.
+			name:     "command after a one line subshell keeps filtering",
+			cmd:      "(cd sub && go build ./...; echo x) | wc -l\ngo test ./...",
+			want:     "(cd sub && go build ./...; echo x) | wc -l\n" + `"/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
 			allKnown: false,
 		},
 		{
@@ -240,6 +266,25 @@ func TestRewriteBlockScope(t *testing.T) {
 			allKnown: false,
 		},
 		{
+			// Same for an arithmetic command: its "))" is matched by its own
+			// "((", so it must not close the subshell it sits in.
+			name:     "arithmetic command inside a subshell does not close it",
+			cmd:      "(\n  ((x = 1))\n  go test ./...\n) | wc -l\ngo build ./...",
+			want:     "(\n  ((x = 1))\n  go test ./...\n) | wc -l\n" + `"/usr/local/bin/snip" run -- go build ./...`,
+			changed:  true,
+			allKnown: false,
+		},
+		{
+			// Inside "((...))" the words are an arithmetic expression, not
+			// commands, so a variable named after a reserved word must not close
+			// the loop that a counting idiom like this lives in.
+			name:     "arithmetic on a variable named done does not close the loop",
+			cmd:      "for f in *.txt\ndo\n  ((done = done + 1))\n  grep MATCH $f\ndone | wc -l",
+			want:     "for f in *.txt\ndo\n  ((done = done + 1))\n  grep MATCH $f\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
 			// A quoted ')' is not a closer. Quotes must be skipped, not merely
 			// stepped over.
 			name:     "quoted paren inside a subshell does not close it",
@@ -280,6 +325,147 @@ func TestRewriteBlockScope(t *testing.T) {
 			name:     "function header then brace group",
 			cmd:      "deploy() {\n  go build ./...\n}\ngo test ./...",
 			want:     "deploy() {\n  go build ./...\n}\n" + `"/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
+			allKnown: false,
+		},
+		{
+			// The ksh/bash `function NAME {` spelling has no parentheses, so
+			// nothing before the '{' put it in command position and the body was
+			// rewritten: `findall | wc -l` then counted snip's capped output
+			// (51) instead of the 60 real matches.
+			name:     "function keyword without parens piped",
+			cmd:      "function findall {\n  grep MATCH data.txt\n}\nfindall | wc -l",
+			want:     "function findall {\n  grep MATCH data.txt\n}\nfindall | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			name:     "function keyword without parens redirected",
+			cmd:      "function findall {\n  grep MATCH data.txt\n}\nfindall > out.txt",
+			want:     "function findall {\n  grep MATCH data.txt\n}\nfindall > out.txt",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// Same on a single line, where the body is a group of its own.
+			name:     "function keyword without parens on one line",
+			cmd:      "function findall { grep MATCH f; }\nfindall | wc -l",
+			want:     "function findall { grep MATCH f; }\nfindall | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// The redundant `function NAME()` spelling keeps working, and the
+			// body still closes so the next command is filtered again.
+			name:     "function keyword with parens closes its body",
+			cmd:      "function deploy() {\n  go build ./...\n}\ngo test ./...",
+			want:     "function deploy() {\n  go build ./...\n}\n" + `"/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
+			allKnown: false,
+		},
+		{
+			name:     "function keyword without parens closes its body",
+			cmd:      "function deploy {\n  go build ./...\n}\ngo test ./...",
+			want:     "function deploy {\n  go build ./...\n}\n" + `"/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
+			allKnown: false,
+		},
+		{
+			// The `function` name must be consumed once and only once: a state
+			// that is never cleared would swallow the `for` below as if it were
+			// a function name, and the loop body would be rewritten.
+			name:     "loop after a function definition still opens",
+			cmd:      "function deploy {\n  go build ./...\n}\nfor f in *.txt\ndo\n  grep MATCH $f\ndone | wc -l",
+			want:     "function deploy {\n  go build ./...\n}\nfor f in *.txt\ndo\n  grep MATCH $f\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A ';' inside a comment is not a group boundary, so the words after
+			// it are still comment text. Reading them as a new command position
+			// let `done` close the live loop and the rest of the body was
+			// rewritten: `wc -l` counted 51 instead of 60.
+			name:     "comment containing a semicolon and a closer",
+			cmd:      "for f in 1; do\n  : # count matches; done below\n  grep MATCH data.txt\ndone | wc -l",
+			want:     "for f in 1; do\n  : # count matches; done below\n  grep MATCH data.txt\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// Same for the other boundaries the splitter honours.
+			name:     "comment containing && and a closer",
+			cmd:      "for f in 1; do\n  : # check && done\n  grep MATCH data.txt\ndone | wc -l",
+			want:     "for f in 1; do\n  : # check && done\n  grep MATCH data.txt\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			name:     "comment containing || and a closer",
+			cmd:      "for f in 1; do\n  : # check || esac fi done\n  grep MATCH data.txt\ndone | wc -l",
+			want:     "for f in 1; do\n  : # check || esac fi done\n  grep MATCH data.txt\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A comment cannot open a block either, so the command after it is
+			// still filtered.
+			name:     "comment containing an opener does not open a block",
+			cmd:      "echo a # for f in *; do\ngo test ./...",
+			want:     "echo a # for f in *; do\n" + `"/usr/local/bin/snip" run -- go test ./...`,
+			changed:  true,
+			allKnown: false,
+		},
+		{
+			// A command spelled inside a comment never runs, so it is not
+			// rewritten either. This differs from master, which split the
+			// comment at the ';' and wrapped its tail — harmless there, but the
+			// same split is what corrupted the loop above.
+			name:     "command inside a comment is not rewritten",
+			cmd:      "echo a # go test ./...; go build ./...",
+			want:     "echo a # go test ./...; go build ./...",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A '#' glued to a closing quote stays inside the word, exactly as
+			// the shell reads it. Treating it as a comment would hide the
+			// `while` behind it and the loop body would be rewritten. This is
+			// the only shape that reaches the check: a '#' anywhere else in a
+			// word is swallowed by the word scan.
+			name:     "hash right after a quoted word is not a comment",
+			cmd:      "grep -c \"x\"#tag f | while read -r l\ndo\n  grep MATCH data.txt\ndone | wc -l",
+			want:     "grep -c \"x\"#tag f | while read -r l\ndo\n  grep MATCH data.txt\ndone | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A block nested in a subshell: the word right after '(' is in
+			// command position, so `for` opens a loop of its own. If it did not,
+			// `done` would close the SUBSHELL instead and everything after it
+			// inside the parens would be rewritten while `wc -l` counts the lot.
+			name:     "loop nested in a one line subshell closes the loop not the subshell",
+			cmd:      "(for f in *.txt; do grep MATCH $f; done; grep MATCH data.txt; echo x) | wc -l",
+			want:     "(for f in *.txt; do grep MATCH $f; done; grep MATCH data.txt; echo x) | wc -l",
+			changed:  false,
+			allKnown: false,
+		},
+		{
+			// A '#' that is not at word start is ordinary text, so this is a
+			// real command and stays filtered.
+			name:     "hash inside a word is not a comment",
+			cmd:      "go test ./... > notes#1.md\ngo build ./...",
+			want:     "go test ./... > notes#1.md\n" + `"/usr/local/bin/snip" run -- go build ./...`,
+			changed:  true,
+			allKnown: true,
+		},
+		{
+			// Graceful degradation: a malformed command with an unmatched '(' is
+			// still handed to the hook, and its stray paren must not pin the
+			// loop open forever — the closing keyword drops it and filtering
+			// resumes after the block.
+			name:     "stray open paren inside a block does not survive its closer",
+			cmd:      "for f in *.go\ndo\n  echo a(b\ndone\ngo test ./...",
+			want:     "for f in *.go\ndo\n  echo a(b\ndone\n" + `"/usr/local/bin/snip" run -- go test ./...`,
 			changed:  true,
 			allKnown: false,
 		},
@@ -525,9 +711,22 @@ func TestRewriteNoFalsePositives(t *testing.T) {
 			want: "mkdir -p x/{p,q}\n" + w + "go test ./...",
 		},
 		{
+			// The '(' here is not in command position (the assignment word came
+			// first), so it opens no subshell and the next line keeps filtering.
 			name: "array assignment is not a subshell",
 			cmd:  "arr=(a b)\ngo test ./...",
 			want: "arr=(a b)\n" + w + "go test ./...",
+		},
+		{
+			name: "three element array assignment is not a subshell",
+			cmd:  "arr=(a b c)\ngo test ./...",
+			want: "arr=(a b c)\n" + w + "go test ./...",
+		},
+		{
+			// "((" in command position is an arithmetic command, not a subshell.
+			name: "arithmetic command is not a subshell",
+			cmd:  "((x = 1 + 2))\ngo test ./...",
+			want: "((x = 1 + 2))\n" + w + "go test ./...",
 		},
 		{
 			// A bare arithmetic command must not arm a phantom heredoc whose

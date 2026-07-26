@@ -24,9 +24,10 @@ type RewriteResult struct {
 // rewrite so token savings are preserved across compound commands.
 //
 // cmd is split on top-level ';', '&&', '||', '&' and newline boundaries (quoted
-// regions are respected). Within each resulting group the head command is
-// wrapped only when its stdout is read directly by the LLM. A head whose output
-// feeds a downstream consumer — a pipe stage or a file redirection ('>') — is
+// regions and comments are respected: a comment runs to the end of its line and
+// the shell reads no operator inside it). Within each resulting group the head
+// command is wrapped only when its stdout is read directly by the LLM. A head
+// whose output feeds a consumer — a pipe stage or a file redirection ('>') — is
 // left raw, because snip's lossy compaction (path compaction, line truncation,
 // match caps, dedup, reformatting) would silently corrupt the exact count and
 // content that consumer depends on (issue #111).
@@ -35,8 +36,9 @@ type RewriteResult struct {
 // (issue #133):
 //
 //   - Groups inside a compound command (loop, conditional, brace group, function
-//     body, subshell), tracked by blockScope. The #111 guard is per-group, so it
-//     could not see that `done | wc -l` consumes the loop body sitting in an
+//     body, subshell), tracked by blockScope — see its doc comment for exactly
+//     which openers and closers are recognised. The #111 guard is per-group, so
+//     it could not see that `done | wc -l` consumes the loop body sitting in an
 //     earlier group; the body was wrapped and the count silently wrong.
 //   - Heredoc bodies, which are literal text the command writes, not commands to
 //     run. Rewriting them corrupted the Makefile or script an agent was writing.
@@ -90,11 +92,6 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 	var quote byte
 	// Heredoc bodies opened on the line being scanned, drained at its newline.
 	var pending []heredocDelim
-	// Set by an unquoted '#' at word start, cleared at the newline. It only
-	// suppresses heredoc detection: the shell would not treat a '<<' inside a
-	// comment as an operator. Group splitting is deliberately left alone, so
-	// this changes no existing rewrite.
-	inComment := false
 	// Nesting of unquoted "((" arithmetic, where '<<' is a left shift and not a
 	// heredoc operator. Arming a heredoc there would swallow the rest of the
 	// command and silently disable filtering for it (issue #133): "((x = 1 << n))"
@@ -126,7 +123,21 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 			i++
 		case '#':
 			if isWordStart(cmd, i) {
-				inComment = true
+				// A comment runs to the end of the line, so the shell reads no
+				// operator inside it: a ';', '&&', '||' or '|' there is not a
+				// group boundary and a '<<' there does not open a heredoc.
+				// Splitting on them handed blockScope a group that starts in
+				// command position but is really comment text, and a closing
+				// reserved word in the comment ("# count matches; done below")
+				// then closed a live block and the rest of its body was
+				// rewritten. Skipping to the newline leaves the comment inside
+				// its group; blockScope.advance skips it there in turn.
+				if nl := strings.IndexByte(cmd[i:], '\n'); nl >= 0 {
+					i += nl
+				} else {
+					i = len(cmd)
+				}
+				continue
 			}
 			i++
 		case '<':
@@ -137,7 +148,7 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 					i += 3
 					continue
 				}
-				if !inComment && arith == 0 {
+				if arith == 0 {
 					if d, next, ok := parseHeredocDelim(cmd, i+2); ok {
 						pending = append(pending, d)
 						heredocGroup = true
@@ -166,7 +177,6 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 			b.WriteByte('\n')
 			i++
 			groupStart = i
-			inComment = false
 			arith = 0
 			if len(pending) > 0 {
 				end := drainHeredocs(cmd, i, pending)
