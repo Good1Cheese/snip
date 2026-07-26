@@ -31,6 +31,22 @@ type RewriteResult struct {
 // match caps, dedup, reformatting) would silently corrupt the exact count and
 // content that consumer depends on (issue #111).
 //
+// Two kinds of group are never runnable commands and are emitted verbatim
+// (issue #133):
+//
+//   - Groups inside a compound command (loop, conditional, brace group, function
+//     body, subshell), tracked by blockScope. The #111 guard is per-group, so it
+//     could not see that `done | wc -l` consumes the loop body sitting in an
+//     earlier group; the body was wrapped and the count silently wrong.
+//   - Heredoc bodies, which are literal text the command writes, not commands to
+//     run. Rewriting them corrupted the Makefile or script an agent was writing.
+//     The group carrying the '<<' operator is left raw too, because `snip run`
+//     never wires stdin to the child.
+//
+// Both also force AllKnown false: snip does not attest what it did not inspect
+// (issue #88). The scope is per-group, so a block or a heredoc never disables
+// filtering for unrelated top-level commands in the same message.
+//
 // The caller must reject commands containing unverifiable constructs
 // (HasUnverifiableConstruct) before calling this, so cmd here is free of command
 // substitution and carriage returns.
@@ -43,21 +59,43 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 	changed := false
 	allKnown := true
 
+	var scope blockScope
+	// Set while the group under construction carries a '<<' operator: its stdin
+	// comes from a heredoc body, which snip run cannot forward.
+	heredocGroup := false
+
 	flush := func(group string) {
-		out, headKnown, hasTail := rewriteGroup(group, cmdSet, prefixes, quotedBin, snipBin)
-		b.WriteString(out)
-		if out != group {
-			changed = true
+		if scope.inBlock() || heredocGroup {
+			b.WriteString(group)
+			if heredocGroup || strings.TrimSpace(group) != "" {
+				allKnown = false
+			}
+		} else {
+			out, headKnown, hasTail := rewriteGroup(group, cmdSet, prefixes, quotedBin, snipBin)
+			b.WriteString(out)
+			if out != group {
+				changed = true
+			}
+			// Empty/whitespace-only groups (e.g. a trailing ';') do not carry a
+			// command and never block auto-allow.
+			if strings.TrimSpace(group) != "" && (!headKnown || hasTail) {
+				allKnown = false
+			}
 		}
-		// Empty/whitespace-only groups (e.g. a trailing ';') do not carry a
-		// command and never block auto-allow.
-		if strings.TrimSpace(group) != "" && (!headKnown || hasTail) {
-			allKnown = false
-		}
+		scope.advance(group)
+		heredocGroup = false
 	}
 
 	groupStart := 0
 	var quote byte
+	// Heredoc bodies opened on the line being scanned, drained at its newline.
+	var pending []heredocDelim
+	// Set by an unquoted '#' at word start, cleared at the newline. It only
+	// suppresses heredoc detection: the shell would not treat a '<<' inside a
+	// comment as an operator. Group splitting is deliberately left alone, so
+	// this changes no existing rewrite.
+	inComment := false
+
 	for i := 0; i < len(cmd); {
 		ch := cmd[i]
 		if quote != 0 {
@@ -78,7 +116,43 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 		case '"':
 			quote = '"'
 			i++
-		case '\n', ';':
+		case '#':
+			if isWordStart(cmd, i) {
+				inComment = true
+			}
+			i++
+		case '<':
+			// "<<" opens a heredoc; "<<<" is a here-string, consumed whole so its
+			// operand is not read as a delimiter.
+			if i+1 < len(cmd) && cmd[i+1] == '<' {
+				if i+2 < len(cmd) && cmd[i+2] == '<' {
+					i += 3
+					continue
+				}
+				if !inComment {
+					if d, next, ok := parseHeredocDelim(cmd, i+2); ok {
+						pending = append(pending, d)
+						heredocGroup = true
+						i = next
+						continue
+					}
+				}
+			}
+			i++
+		case '\n':
+			flush(cmd[groupStart:i])
+			b.WriteByte('\n')
+			i++
+			groupStart = i
+			inComment = false
+			if len(pending) > 0 {
+				end := drainHeredocs(cmd, i, pending)
+				b.WriteString(cmd[i:end])
+				pending = pending[:0]
+				i = end
+				groupStart = i
+			}
+		case ';':
 			flush(cmd[groupStart:i])
 			b.WriteByte(ch)
 			i++
