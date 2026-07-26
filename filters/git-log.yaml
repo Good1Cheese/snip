@@ -1,18 +1,30 @@
 name: "git-log"
-version: 1
+version: 2
 description: "Condense git log to hash + message + author + date"
 
 match:
   command: "git"
   subcommand: "log"
-  exclude_flags: ["--format", "--pretty", "--graph", "--oneline"]
+  # A request for a patch or a stat asks a different question than "what are the
+  # recent commits", and the template would then count output lines as commits
+  # (issue #125). Opt out entirely for those.
+  exclude_flags:
+    ["--format", "--pretty", "--graph", "--oneline",
+     "-p", "--patch", "--stat", "--numstat", "--name-only", "--name-status"]
 
 inject:
-  args: ["--pretty=format:%h %s (%ar) <%an>", "--no-merges"]
+  # No --no-merges: it hid merge commits unconditionally, so on a PR-merge
+  # history the most recent commit was absent while the header still claimed a
+  # complete list. It saved nothing measurable, since -n already bounds the
+  # output (issue #124).
+  args: ["--pretty=format:%h %s (%ar) <%an>"]
   defaults:
     "-n": "10"
-  skip_if_present:
-    ["--merges", "--format", "--pretty", "--oneline", "-n", "--max-count"]
+  # -n / --max-count are handled by defaults, which leaves a user-supplied value
+  # alone. Listing them here disabled the whole injection instead, so `git log
+  # -n 3` fell back to raw multi-line git output under a header counting lines
+  # rather than commits (issue #125).
+  skip_if_present: ["--format", "--pretty", "--oneline"]
 
 pipeline:
   - action: "keep_lines"
@@ -20,7 +32,21 @@ pipeline:
   - action: "truncate_lines"
     max: 80
     ellipsis: "..."
+  # Safe here, unlike git-diff: the injected --pretty emits exactly one line per
+  # commit, there is no summary line, and no cap runs before the template.
   - action: "format_template"
     template: "{{.count}} commits:\n{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "merge commits are kept and the count matches what is shown"
+    input: |
+      25b7589 Merge pull request #131 from user/pin (16 minutes ago) <Edouard>
+      eb5fc8c refactor(engine): extract resultFrom (41 minutes ago) <Edouard>
+      0b337a9 fix(filter): truncate_bytes respects its cap (42 minutes ago) <Edouard>
+    expected: |
+      3 commits:
+      25b7589 Merge pull request #131 from user/pin (16 minutes ago) <Edouard>
+      eb5fc8c refactor(engine): extract resultFrom (41 minutes ago) <Edouard>
+      0b337a9 fix(filter): truncate_bytes respects its cap (42 minutes ago) <Edouard>
