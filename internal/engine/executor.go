@@ -158,20 +158,7 @@ func Execute(command string, args []string) (*Result, error) {
 		close(drained)
 	}()
 
-	exitCode := 0
-	var waitErr error
-	err = cmd.Wait()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			// The command ran to completion; only the wait bookkeeping failed.
-			// Report the error, but still return the Result so the caller does
-			// not re-run a command whose side effects have already happened.
-			// The exit status went missing with the bookkeeping, so it stays 0.
-			waitErr = fmt.Errorf("wait command: %w", err)
-		}
-	}
+	waitErr := cmd.Wait()
 
 	// The command itself has exited. Anything it left running in the background
 	// still holds the write ends, so the readers would block for that process's
@@ -191,13 +178,36 @@ func Execute(command string, args []string) (*Result, error) {
 		_ = stderrR.Close()
 	}
 
-	return &Result{
-		Stdout:    stdoutBuf.String(),
-		Stderr:    stderrBuf.String(),
-		ExitCode:  exitCode,
-		Duration:  time.Since(start),
-		Truncated: truncated,
-	}, waitErr
+	result, err := resultFrom(waitErr, stdoutBuf.String(), stderrBuf.String(), time.Since(start))
+	// Set here rather than inside resultFrom: whether the drain ran out of time
+	// is a property of the capture, not of how cmd.Wait ended, and resultFrom
+	// stays a pure function of the wait outcome.
+	result.Truncated = truncated
+	return result, err
+}
+
+// resultFrom turns the error of cmd.Wait plus the captured streams into the
+// pair Execute returns. It is a separate function because its middle branch is
+// unreachable from a test through a real command: the Go runtime owns SIGCHLD
+// and os/exec exposes no seam on the wait syscall.
+//
+// Every branch returns a non-nil *Result. The command has started by the time
+// this is called, so "never ran" (the nil *Result) is not one of the cases.
+func resultFrom(waitErr error, stdout, stderr string, d time.Duration) (*Result, error) {
+	result := &Result{Stdout: stdout, Stderr: stderr, Duration: d}
+	if waitErr == nil {
+		return result, nil
+	}
+	if exitErr, ok := waitErr.(*exec.ExitError); ok {
+		// The command failed, which is not an error of Execute.
+		result.ExitCode = exitErr.ExitCode()
+		return result, nil
+	}
+	// The command ran to completion; only the wait bookkeeping failed. Report
+	// the error, but still return the Result so the caller does not re-run a
+	// command whose side effects have already happened. The exit status went
+	// missing with the bookkeeping, so it stays 0.
+	return result, fmt.Errorf("wait command: %w", waitErr)
 }
 
 // Passthrough runs a command with inherited stdio (no capture).

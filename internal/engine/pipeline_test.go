@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"runtime"
@@ -718,5 +719,70 @@ func TestPipelineRunDoesNotMarkCompleteOutput(t *testing.T) {
 	}
 	if strings.Contains(out, truncatedMarker) {
 		t.Errorf("stdout carries the truncation marker for complete output: %q", out)
+	}
+}
+
+// The counterpart of TestPipelineRunFallsBackWhenCommandNeverRan: a non-nil
+// Result alongside a non-nil error means the command did run, so Run must use
+// that Result instead of re-running the command and repeating its side effects
+// (issue #119). No real command produces that pair, hence the execute seam.
+func TestPipelineRunDoesNotFallBackWhenCommandRan(t *testing.T) {
+	// A command that cannot be executed: should Run wrongly fall back, the
+	// Passthrough attempt is loud and its exit code differs from the Result's.
+	const missing = "nonexistent-command-xyz"
+	f := filter.Filter{
+		Name:    "ran-tool",
+		Version: 1,
+		Match:   filter.Match{Command: missing},
+		Pipeline: filter.Pipeline{
+			{ActionName: "keep_lines", Params: map[string]any{"pattern": `kept`}},
+		},
+	}
+	executed := 0
+	p := &Pipeline{
+		Registry: filter.NewRegistry([]filter.Filter{f}),
+		Verbose:  1,
+		execute: func(string, []string) (*Result, error) {
+			executed++
+			return &Result{Stdout: "kept line\ndropped line\n"}, errors.New("wait command: boom")
+		},
+	}
+
+	// NOTE: not safe under t.Parallel() since os.Stdout/os.Stderr are global.
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	t.Cleanup(func() { os.Stdout, os.Stderr = oldStdout, oldStderr })
+
+	code := p.Run(missing, nil)
+
+	_ = outW.Close()
+	_ = errW.Close()
+	var outBuf, errBuf bytes.Buffer
+	_, _ = io.Copy(&outBuf, outR)
+	_, _ = io.Copy(&errBuf, errR)
+	os.Stdout, os.Stderr = oldStdout, oldStderr
+
+	if executed != 1 {
+		t.Errorf("command executed %d times, want exactly 1", executed)
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 from the Result", code)
+	}
+	if !strings.Contains(outBuf.String(), "kept line") || strings.Contains(outBuf.String(), "dropped line") {
+		t.Errorf("captured output was not filtered and printed, got %q", outBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "exit status unknown") {
+		t.Errorf("stderr must report the lost exit status, got %q", errBuf.String())
+	}
+	if strings.Contains(errBuf.String(), "passthrough") {
+		t.Errorf("Run fell back to passthrough for a command that already ran, stderr: %q", errBuf.String())
 	}
 }
