@@ -147,7 +147,7 @@ snip integrates with every major AI coding assistant. One binary, universal comp
 | **Cursor** | `snip init --agent cursor` | beforeShellExecution hook (native) |
 | **GitHub Copilot** | `snip init --agent copilot` | .github/copilot-instructions.md |
 | **Gemini CLI** | `snip init --agent gemini` | GEMINI.md prompt injection |
-| **Codex (OpenAI)** | `snip init --agent codex` | AGENTS.md prompt injection |
+| **Codex (OpenAI)** | `snip init --agent codex` | PreToolUse hook (native) |
 | **Pi (pi.dev)** | `snip init --agent pi` | PreToolUse hook (via [pi-hooks](https://github.com/hsingjui/pi-hooks)) |
 | **Grok Build (xAI)** | `snip init --agent grok` | PreToolUse hook (deny + re-run suggestion) |
 | **Windsurf** | `snip init --agent windsurf` | .windsurfrules prompt injection |
@@ -208,7 +208,7 @@ snip init --agent pi --uninstall   # remove the hook
 snip init --agent grok
 ```
 
-This writes `~/.grok/hooks/snip.json` with a `PreToolUse` hook matching the shell tool. Grok Build hooks cannot rewrite commands in place (the hook contract is allow/deny only), so snip denies matched commands with a re-run suggestion (`"…/snip" run -- <command>`), the same pattern as Codex. Non-matching commands pass through untouched, and the hook is fail-open: if snip breaks, commands simply run unfiltered.
+This writes `~/.grok/hooks/snip.json` with a `PreToolUse` hook matching the shell tool. Grok Build hooks cannot rewrite commands in place (the hook contract is allow/deny only), so snip denies matched commands with a re-run suggestion (`"…/snip" run -- <command>`). Non-matching commands pass through untouched, and the hook is fail-open: if snip breaks, commands simply run unfiltered.
 
 Prefer prompt injection instead? Grok Build reads `AGENTS.md` natively:
 
@@ -219,12 +219,33 @@ snip init --agent grok --uninstall     # remove the hook
 
 `AGENTS.md` is shared with Codex, so `--uninstall` never deletes it; it prints a reminder instead.
 
-### Copilot / Gemini / Codex / Windsurf / Cline / Kilo Code / Antigravity
+### Codex
+
+```bash
+snip init --agent codex
+```
+
+This patches `~/.codex/hooks.json` with a native `PreToolUse` hook. Supported shell commands are transparently rewritten through snip with Codex's `updatedInput` contract, so the model runs commands normally and sees only the filtered output.
+
+For safety, mixed commands containing unsupported segments, pipelines with uninspected tails, and command substitutions pass through unchanged so Codex keeps its native permission flow.
+
+Use `snip proxy -- <command>` when full unfiltered output is required.
+
+```bash
+snip init --agent codex --uninstall
+```
+
+For older Codex releases without `PreToolUse` input rewriting, use the legacy project-scoped prompt integration:
+
+```bash
+snip init --agent codex --mode prompt
+```
+
+### Copilot / Gemini / Windsurf / Cline / Kilo Code / Antigravity
 
 ```bash
 snip init --agent copilot      # creates .github/copilot-instructions.md
 snip init --agent gemini       # creates GEMINI.md
-snip init --agent codex        # creates AGENTS.md
 snip init --agent windsurf     # creates .windsurfrules
 snip init --agent cline        # creates .clinerules
 snip init --agent kilocode     # creates .kilocode/rules/snip-rules.md
