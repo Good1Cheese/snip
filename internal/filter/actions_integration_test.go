@@ -331,10 +331,22 @@ func TestRailsRoutesFilterIntegration(t *testing.T) {
 		t.Errorf("filtered (%d) not shorter than input (%d)", len(filtered), len(fixture))
 	}
 
-	// Should contain routes total summary
-	if !strings.Contains(filtered, "routes total") {
-		t.Error("filtered output missing 'routes total'")
+	// Should contain the route count summary
+	if !strings.Contains(filtered, " routes:") {
+		t.Errorf("filtered output missing route count header: %q", filtered)
 	}
+
+	// The route table itself must survive the aggregate stage (issue #134)
+	if !strings.Contains(filtered, "users#index") {
+		t.Errorf("filtered output missing the route table: %q", filtered)
+	}
+
+	// Not asserted here: that the aggregate summary line does not leak into the
+	// payload. This fixture has more routes than the head cap, so the appended
+	// "routes: N" line is dropped by head whether or not the remove_lines stage
+	// exists, and the assertion would pass either way. The filter's own inline
+	// tests use a fixture under the cap and do pin it: deleting that stage fails
+	// all three of them.
 
 	// Calculate and log token savings
 	inputTokens := utils.EstimateTokens(fixture)
