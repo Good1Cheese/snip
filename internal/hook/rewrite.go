@@ -24,12 +24,30 @@ type RewriteResult struct {
 // rewrite so token savings are preserved across compound commands.
 //
 // cmd is split on top-level ';', '&&', '||', '&' and newline boundaries (quoted
-// regions are respected). Within each resulting group the head command is
-// wrapped only when its stdout is read directly by the LLM. A head whose output
-// feeds a downstream consumer — a pipe stage or a file redirection ('>') — is
+// regions and comments are respected: a comment runs to the end of its line and
+// the shell reads no operator inside it). Within each resulting group the head
+// command is wrapped only when its stdout is read directly by the LLM. A head
+// whose output feeds a consumer — a pipe stage or a file redirection ('>') — is
 // left raw, because snip's lossy compaction (path compaction, line truncation,
 // match caps, dedup, reformatting) would silently corrupt the exact count and
 // content that consumer depends on (issue #111).
+//
+// Two kinds of group are never runnable commands and are emitted verbatim
+// (issue #133):
+//
+//   - Groups inside a compound command (loop, conditional, brace group, function
+//     body, subshell), tracked by blockScope — see its doc comment for exactly
+//     which openers and closers are recognised. The #111 guard is per-group, so
+//     it could not see that `done | wc -l` consumes the loop body sitting in an
+//     earlier group; the body was wrapped and the count silently wrong.
+//   - Heredoc bodies, which are literal text the command writes, not commands to
+//     run. Rewriting them corrupted the Makefile or script an agent was writing.
+//     The group carrying the '<<' operator is left raw too, because `snip run`
+//     never wires stdin to the child.
+//
+// Both also force AllKnown false: snip does not attest what it did not inspect
+// (issue #88). The scope is per-group, so a block or a heredoc never disables
+// filtering for unrelated top-level commands in the same message.
 //
 // The caller must reject commands containing unverifiable constructs
 // (HasUnverifiableConstruct) before calling this, so cmd here is free of command
@@ -43,21 +61,46 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 	changed := false
 	allKnown := true
 
+	var scope blockScope
+	// Set while the group under construction carries a '<<' operator: its stdin
+	// comes from a heredoc body, which snip run cannot forward.
+	heredocGroup := false
+
 	flush := func(group string) {
-		out, headKnown, hasTail := rewriteGroup(group, cmdSet, prefixes, quotedBin, snipBin)
-		b.WriteString(out)
-		if out != group {
-			changed = true
+		if scope.inBlock() || heredocGroup {
+			b.WriteString(group)
+			if heredocGroup || strings.TrimSpace(group) != "" {
+				allKnown = false
+			}
+		} else {
+			out, headKnown, hasTail := rewriteGroup(group, cmdSet, prefixes, quotedBin, snipBin)
+			b.WriteString(out)
+			if out != group {
+				changed = true
+			}
+			// Empty/whitespace-only groups (e.g. a trailing ';') do not carry a
+			// command and never block auto-allow.
+			if strings.TrimSpace(group) != "" && (!headKnown || hasTail) {
+				allKnown = false
+			}
 		}
-		// Empty/whitespace-only groups (e.g. a trailing ';') do not carry a
-		// command and never block auto-allow.
-		if strings.TrimSpace(group) != "" && (!headKnown || hasTail) {
-			allKnown = false
-		}
+		scope.advance(group)
+		heredocGroup = false
 	}
 
 	groupStart := 0
 	var quote byte
+	// Heredoc bodies opened on the line being scanned, drained at its newline.
+	var pending []heredocDelim
+	// Nesting of unquoted "((" arithmetic, where '<<' is a left shift and not a
+	// heredoc operator. Arming a heredoc there would swallow the rest of the
+	// command and silently disable filtering for it (issue #133): "((x = 1 << n))"
+	// would open a heredoc on delimiter "n". Command substitution is rejected
+	// upstream (HasUnverifiableConstruct), so "((" can only be an arithmetic
+	// command here. Reset at every newline so an unbalanced "((" cannot disarm
+	// heredoc detection for the rest of the command.
+	arith := 0
+
 	for i := 0; i < len(cmd); {
 		ch := cmd[i]
 		if quote != 0 {
@@ -78,7 +121,71 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 		case '"':
 			quote = '"'
 			i++
-		case '\n', ';':
+		case '#':
+			if isWordStart(cmd, i) {
+				// A comment runs to the end of the line, so the shell reads no
+				// operator inside it: a ';', '&&', '||' or '|' there is not a
+				// group boundary and a '<<' there does not open a heredoc.
+				// Splitting on them handed blockScope a group that starts in
+				// command position but is really comment text, and a closing
+				// reserved word in the comment ("# count matches; done below")
+				// then closed a live block and the rest of its body was
+				// rewritten. Skipping to the newline leaves the comment inside
+				// its group; blockScope.advance skips it there in turn.
+				if nl := strings.IndexByte(cmd[i:], '\n'); nl >= 0 {
+					i += nl
+				} else {
+					i = len(cmd)
+				}
+				continue
+			}
+			i++
+		case '<':
+			// "<<" opens a heredoc; "<<<" is a here-string, consumed whole so its
+			// operand is not read as a delimiter.
+			if i+1 < len(cmd) && cmd[i+1] == '<' {
+				if i+2 < len(cmd) && cmd[i+2] == '<' {
+					i += 3
+					continue
+				}
+				if arith == 0 {
+					if d, next, ok := parseHeredocDelim(cmd, i+2); ok {
+						pending = append(pending, d)
+						heredocGroup = true
+						i = next
+						continue
+					}
+				}
+			}
+			i++
+		case '(':
+			if i+1 < len(cmd) && cmd[i+1] == '(' {
+				arith++
+				i += 2
+				continue
+			}
+			i++
+		case ')':
+			if arith > 0 && i+1 < len(cmd) && cmd[i+1] == ')' {
+				arith--
+				i += 2
+				continue
+			}
+			i++
+		case '\n':
+			flush(cmd[groupStart:i])
+			b.WriteByte('\n')
+			i++
+			groupStart = i
+			arith = 0
+			if len(pending) > 0 {
+				end := drainHeredocs(cmd, i, pending)
+				b.WriteString(cmd[i:end])
+				pending = pending[:0]
+				i = end
+				groupStart = i
+			}
+		case ';':
 			flush(cmd[groupStart:i])
 			b.WriteByte(ch)
 			i++
