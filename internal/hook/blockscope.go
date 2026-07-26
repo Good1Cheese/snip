@@ -49,6 +49,17 @@ const (
 //     group, and never on a case-arm pattern ("  a )"). Reserved words count
 //     only in command position and comments are skipped whole, so neither
 //     `echo done` nor `# done` closes anything.
+//   - Command position is approximated, not decided the way the shell does, and
+//     four shapes are known to fool it. A case-arm pattern that is itself a
+//     reserved word (`case $s in done)`) is read as a command and closes the
+//     case. An extglob alternative does the same, because '|' is treated as a
+//     pipeline separator everywhere (`for f in @(data|done).txt`). `time -p`
+//     loses the opener that follows it, since only bare `time` is whitelisted.
+//     And a '#' written flush against a ')' is not seen as a comment, because
+//     isWordStart does not count ')' as a word boundary (`a)# done marker`).
+//     All four are pre-existing: they corrupt identically on master, which has
+//     no block tracking at all, so this file narrows the defect rather than
+//     introducing it. Tracked separately.
 //   - A missed opener costs correctness, not just savings: the body is rewritten
 //     and a consumer of the block reads snip's compacted output. Every opener
 //     above is therefore matched on the shell's own rule (command position),
