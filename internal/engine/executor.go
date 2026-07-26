@@ -3,11 +3,39 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 )
+
+// drainGrace bounds how long Execute keeps reading output after the command
+// itself has exited. Descendants it left running inherit the pipe write ends,
+// so an unbounded drain waits for the longest-lived of them.
+const drainGrace = 100 * time.Millisecond
+
+// syncBuffer collects one captured stream. Access is guarded because Execute
+// may read the buffer while its reader goroutine is still blocked: a descendant
+// of the command can hold the pipe's write end open long after the command
+// itself has exited, and closing the read end does not interrupt a blocked read
+// on every platform.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // Result holds the output of a command execution.
 type Result struct {
@@ -72,33 +100,51 @@ func Execute(command string, args []string) (*Result, error) {
 	// commands that don't read stdin (most filtered commands).
 	// Passthrough commands still get stdin via the Passthrough function.
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	// Own the pipes rather than using cmd.StdoutPipe/StderrPipe, whose contract
+	// requires every read to finish before cmd.Wait. Bounding the drain means
+	// reaping the child first, which that contract does not allow.
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	defer func() { _ = stdoutR.Close() }()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		_ = stdoutW.Close()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
+	defer func() { _ = stderrR.Close() }()
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
+		_ = stdoutW.Close()
+		_ = stderrW.Close()
 		return nil, fmt.Errorf("start command: %w", err)
 	}
+	// The child holds its own copies of the write ends now. Drop ours, or the
+	// readers below would never see EOF.
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 
-	var stdoutBuf, stderrBuf bytes.Buffer
+	var stdoutBuf, stderrBuf syncBuffer
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		_, _ = stdoutBuf.ReadFrom(stdoutPipe)
+		_, _ = io.Copy(&stdoutBuf, stdoutR)
 	}()
 	go func() {
 		defer wg.Done()
-		_, _ = stderrBuf.ReadFrom(stderrPipe)
+		_, _ = io.Copy(&stderrBuf, stderrR)
 	}()
 
-	wg.Wait()
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
 
 	exitCode := 0
 	err = cmd.Wait()
@@ -108,6 +154,17 @@ func Execute(command string, args []string) (*Result, error) {
 		} else {
 			return nil, fmt.Errorf("wait command: %w", err)
 		}
+	}
+
+	// The command itself has exited. Anything it left running in the background
+	// still holds the write ends, so the readers would block for that process's
+	// lifetime. Give them a grace period to drain what is already buffered, then
+	// close the read ends and take whatever they captured.
+	select {
+	case <-drained:
+	case <-time.After(drainGrace):
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
 	}
 
 	return &Result{

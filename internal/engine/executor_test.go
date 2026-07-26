@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecuteEcho(t *testing.T) {
@@ -123,5 +124,49 @@ func TestMakeCommandRegular(t *testing.T) {
 	// Should NOT wrap with sh
 	if len(cmd.Args) > 0 && cmd.Args[0] == "sh" {
 		t.Error("regular commands should not be wrapped with sh")
+	}
+}
+
+// A command that leaves a process running in the background hands that
+// descendant its copies of the pipe write ends, so the pipes only reach EOF
+// once the descendant exits too. Execute must not wait for it.
+//
+// The descendant writes well after the grace period, which pins both sides of
+// the trade-off: everything the command itself wrote is captured, and the late
+// write is dropped rather than waited for.
+func TestExecuteDoesNotWaitForBackgroundDescendants(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	started := time.Now()
+	result, err := Execute("sh", []string{"-c", "(sleep 5; echo late) & echo started"})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.TrimSpace(result.Stdout); got != "started" {
+		t.Errorf("stdout = %q, want %q", got, "started")
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("Execute blocked for %s on a background descendant", elapsed)
+	}
+}
+
+// Output well past the pipe buffer makes the command block on write until the
+// reader drains. Nothing may be truncated, and neither side may deadlock.
+func TestExecuteLargeOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	const want = 200000
+	result, err := Execute("sh", []string{"-c", "seq 1 200000"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Count(result.Stdout, "\n"); got != want {
+		t.Errorf("captured %d lines, want %d", got, want)
+	}
+	if got := strings.TrimSpace(result.Stdout); !strings.HasSuffix(got, "\n200000") {
+		t.Errorf("output truncated, ends with %q", got[max(0, len(got)-20):])
 	}
 }
