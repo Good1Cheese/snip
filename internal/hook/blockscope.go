@@ -2,9 +2,30 @@ package hook
 
 import "strings"
 
-// blockScope tracks how deep the segmenter currently sits inside a shell
-// compound command: a loop (for/while/until/select), a conditional (if/case), a
-// brace group, a function body or a subshell.
+// blockKind is what opened an entry on blockScope's stack. The kind matters
+// because the same byte closes different things: ')' ends a subshell, but on a
+// case-arm pattern line ("  a )") it ends the pattern and the case block stays
+// open. Tracking only a depth cannot tell those apart, and reading "  a )" as a
+// subshell close pops the case back to top level and re-wraps the arm body —
+// the exact corruption issue #133 reports.
+type blockKind uint8
+
+const (
+	// blockParen is an unquoted '(' that does not open a subshell: an array
+	// assignment ("arr=(a b)"), an arithmetic command ("((x = 1))"), an extglob
+	// pattern. It is pushed only so its matching ')' is consumed and cannot be
+	// mistaken for the close of an enclosing subshell. It is not a block, so it
+	// never suppresses rewriting.
+	blockParen blockKind = iota
+	blockSubshell
+	blockBrace // { ... } group or function body
+	blockLoop  // for / while / until / select ... done
+	blockCond  // if ... fi
+	blockCase  // case ... esac
+)
+
+// blockScope tracks which shell compound commands the segmenter currently sits
+// inside: a loop, a conditional, a brace group, a function body or a subshell.
 //
 // The segmenter splits on top-level ';', '&&', '||', '&' and '\n', which means a
 // block body becomes an ordinary group. The #111 guard that keeps a producer raw
@@ -13,100 +34,219 @@ import "strings"
 // the body — never protected the body. It was wrapped, and the consumer read
 // snip's compacted view instead of the real output (issue #133, bug A).
 //
-// The rule chosen here is deliberately one sentence: nothing inside a block is
-// ever rewritten. It is a counter over machinery that already exists, not a
-// shell parser, and every misdetection costs filtering rather than correctness —
-// an unmatched opener pins the depth above zero and the remainder is simply
-// passed through raw. Consumer propagation (resolving which block a trailing
-// pipe belongs to and rewriting the bodies that have no consumer) would recover
-// more savings, but its failure mode is wrong output, not lost savings, and this
-// hook path prefers the opposite trade (see the #127 process-substitution fix).
+// The rule is one sentence: nothing inside a block is ever rewritten. It is a
+// stack over machinery that already exists, not a shell parser, and every
+// misdetection costs filtering rather than correctness — an unmatched opener
+// pins the scope open and the remainder is simply passed through raw. Consumer
+// propagation (resolving which block a trailing pipe belongs to and rewriting
+// the bodies that have no consumer) would recover more savings, but its failure
+// mode is wrong output, not lost savings, and this hook path prefers the
+// opposite trade (see the #127 process-substitution fix).
 type blockScope struct {
-	depth int
+	stack []blockKind
+	// blocks is the number of stack entries that are not blockParen, i.e. how
+	// many real compound commands are open.
+	blocks int
 }
 
 // inBlock reports whether the group being flushed sits inside a compound
 // command and must therefore be emitted verbatim.
-func (s *blockScope) inBlock() bool { return s.depth > 0 }
+func (s *blockScope) inBlock() bool { return s.blocks > 0 }
 
-// advance updates the depth from a group that has just been emitted.
-func (s *blockScope) advance(group string) {
-	// A block can open behind a pipe ("cat list | while read -r l"), so every
-	// top-level pipeline stage is a command position and must be classified.
-	rest := group
-	for {
-		head, tail := splitFirstPipe(rest)
-		s.classify(firstToken(head))
-		if tail == "" {
-			break
-		}
-		rest = tail[1:]
+func (s *blockScope) push(k blockKind) {
+	s.stack = append(s.stack, k)
+	if k != blockParen {
+		s.blocks++
 	}
+}
 
-	// Openers and closers with no reserved word of their own: a function header
-	// ("deploy() {") ends with a standalone '{', and a spaced one-line subshell
-	// ("( go build ./... )") ends with a standalone ')'. Both are skipped when
-	// the whole group is that single character, which firstToken already saw.
-	t := strings.TrimSpace(group)
-	if len(t) < 2 {
+func (s *blockScope) pop() {
+	n := len(s.stack)
+	if n == 0 {
 		return
 	}
-	switch prev, last := t[len(t)-2], t[len(t)-1]; {
-	case last == '{' && (prev == ' ' || prev == '\t' || prev == ')'):
-		s.depth++
-	case last == ')' && (prev == ' ' || prev == '\t'):
-		s.close()
+	if s.stack[n-1] != blockParen {
+		s.blocks--
 	}
+	s.stack = s.stack[:n-1]
 }
 
-// classify applies one command-position token to the depth counter. Quoting is
-// not stripped, matching the shell: a quoted 'for' is not a reserved word.
-func (s *blockScope) classify(tok string) {
-	switch tok {
-	case "for", "while", "until", "if", "case", "select", "{", "(":
-		s.depth++
-	case "done", "fi", "esac", "}", ")":
-		s.close()
+func (s *blockScope) top() (blockKind, bool) {
+	if n := len(s.stack); n > 0 {
+		return s.stack[n-1], true
 	}
+	return 0, false
 }
 
-func (s *blockScope) close() {
-	if s.depth > 0 {
-		s.depth--
+// closeKeyword applies a closing reserved word ("done", "fi", "esac", "}"). Any
+// unmatched blockParen entries above the block being closed are dropped first,
+// so a stray '(' cannot leave a block open forever.
+func (s *blockScope) closeKeyword() {
+	for len(s.stack) > 0 && s.stack[len(s.stack)-1] == blockParen {
+		s.stack = s.stack[:len(s.stack)-1]
 	}
+	s.pop()
 }
 
-// firstToken returns the first word of a command position: leading blanks are
-// skipped, then bytes are read up to the first blank or shell operator. A lone
-// '(', ')', '{' or '}' is returned as a single-character token only when it
-// stands alone, so "(cd sub" and "arr=(a b)" are not read as subshell openers
-// and "mkdir -p x/{p,q}" is not read as a brace group.
-func firstToken(stage string) string {
-	i := 0
-	for i < len(stage) && (stage[i] == ' ' || stage[i] == '\t' || stage[i] == '\n') {
-		i++
-	}
-	if i >= len(stage) {
-		return ""
-	}
-	if c := stage[i]; c == '(' || c == ')' || c == '{' || c == '}' {
-		if i+1 >= len(stage) || isTokenBreak(stage[i+1]) {
-			return stage[i : i+1]
+// advance updates the scope from a group that has just been emitted. It walks
+// the group byte by byte, honouring quotes, and keeps track of whether the next
+// word sits in command position — the only place a reserved word is reserved.
+//
+// The '(' and ')' bytes are handled where they occur rather than only at the end
+// of the group: a subshell closed before a trailing redirect or pipe
+// ("( cd sub && go build ./... ) > out.txt") must still close, otherwise the
+// scope stays open and every later top-level command silently loses filtering.
+func (s *blockScope) advance(group string) {
+	cmdPos := true
+	for i := 0; i < len(group); {
+		switch c := group[i]; c {
+		case ' ', '\t', '\n':
+			i++
+		case '\'', '"':
+			i = skipQuoted(group, i)
+			cmdPos = false
+		case ';', '|':
+			// A single '|' starts a new pipeline stage, which is a command
+			// position ("cat list | while read -r l" opens a loop). ';' is a
+			// group boundary and cannot reach here, but costs nothing to accept.
+			i++
+			cmdPos = true
+		case '&', '<', '>':
+			// Redirections only: "&&" and a bare "&" are group boundaries, so an
+			// '&' here belongs to a form like "2>&1".
+			i++
+			cmdPos = false
+		case '(':
+			i, cmdPos = s.openParen(group, i, cmdPos)
+		case ')':
+			i++
+			if k, ok := s.top(); ok && k == blockCase {
+				// End of a case-arm pattern ("  a )" or "  -v | --verbose )").
+				// The case block stays open, so the arm body stays unwrapped,
+				// and the arm's own body is a command position.
+				cmdPos = true
+				continue
+			} else if ok && (k == blockParen || k == blockSubshell) {
+				s.pop()
+			}
+			cmdPos = false
+		case '{':
+			// A brace group only when '{' stands alone as a word; "x/{p,q}" is
+			// brace expansion.
+			if cmdPos && (i+1 >= len(group) || isTokenBreak(group[i+1])) {
+				s.push(blockBrace)
+				i++
+				cmdPos = true
+				continue
+			}
+			i++
+			cmdPos = false
+		case '}':
+			if cmdPos {
+				if k, ok := s.top(); ok && k == blockBrace {
+					s.pop()
+				}
+			}
+			i++
+			cmdPos = false
+		default:
+			start := i
+			for i < len(group) && !isWordBreak(group[i]) {
+				i++
+			}
+			cmdPos = s.classify(group[start:i], cmdPos)
 		}
 	}
-	start := i
-	for i < len(stage) && !isTokenBreak(stage[i]) {
-		i++
-	}
-	return stage[start:i]
 }
 
+// openParen handles an unquoted '(' and returns the next index and the command
+// position that follows it.
+func (s *blockScope) openParen(group string, i int, cmdPos bool) (int, bool) {
+	// A subshell only when '(' stands alone as a word, so "(cd sub && go test
+	// ./...)" and "((x = 1))" are not read as subshell openers and keep being
+	// filtered exactly as on master.
+	if cmdPos && (i+1 >= len(group) || isTokenBreak(group[i+1])) {
+		s.push(blockSubshell)
+		return i + 1, true
+	}
+	// "name()" — a function header. The body's '{' that follows is in command
+	// position even though a word ("deploy") came before it.
+	j := i + 1
+	for j < len(group) && (group[j] == ' ' || group[j] == '\t') {
+		j++
+	}
+	if j < len(group) && group[j] == ')' {
+		return j + 1, true
+	}
+	s.push(blockParen)
+	return i + 1, false
+}
+
+// classify applies one word to the scope and returns whether the word after it
+// is still in command position. Quoting is not stripped, matching the shell: a
+// quoted 'for' is not a reserved word, and advance never reaches here for one.
+func (s *blockScope) classify(word string, cmdPos bool) bool {
+	if !cmdPos {
+		return false
+	}
+	switch word {
+	case "if":
+		s.push(blockCond)
+		return true // "if grep -q x f": a command follows
+	case "while", "until":
+		s.push(blockLoop)
+		return true
+	case "for", "select":
+		s.push(blockLoop)
+		return false // a variable name follows, not a command
+	case "case":
+		s.push(blockCase)
+		return false
+	case "done", "fi", "esac":
+		s.closeKeyword()
+		return false
+	case "then", "do", "else", "elif", "!", "time":
+		// Reserved words that introduce another command position, so a nested
+		// opener on the same line ("then if false") is still seen.
+		return true
+	}
+	return false
+}
+
+// skipQuoted returns the index just past the quoted region starting at i.
+func skipQuoted(s string, i int) int {
+	q := s[i]
+	for i++; i < len(s); i++ {
+		if s[i] == '\\' && q == '"' && i+1 < len(s) {
+			i++
+			continue
+		}
+		if s[i] == q {
+			return i + 1
+		}
+	}
+	return i
+}
+
+// isTokenBreak reports whether c ends a shell word. It excludes '(', ')', '{'
+// and '}' so that a lone one of those is only treated as an operator when it
+// stands alone: "((x" and "x/{p,q}" are single words.
 func isTokenBreak(c byte) bool {
 	switch c {
 	case ' ', '\t', '\n', ';', '&', '|', '<', '>':
 		return true
 	}
 	return false
+}
+
+// isWordBreak is isTokenBreak plus every byte advance handles itself, so the
+// default branch of its scan always consumes at least one byte.
+func isWordBreak(c byte) bool {
+	switch c {
+	case '(', ')', '{', '}', '\'', '"':
+		return true
+	}
+	return isTokenBreak(c)
 }
 
 // heredocDelim is a pending heredoc body waiting for its terminator line.
@@ -121,10 +261,6 @@ type heredocDelim struct {
 //
 // The delimiter is unquoted the way the shell does ('EOF', "EOF" and \EOF all
 // name EOF), because the terminator line is compared against the unquoted form.
-// An all-digit delimiter is rejected: it never occurs in practice and it is what
-// a bare arithmetic command such as "((x = 1 << 2))" would produce, where arming
-// a heredoc would swallow the rest of the command and silently disable filtering
-// (issue #133).
 func parseHeredocDelim(cmd string, i int) (heredocDelim, int, bool) {
 	var d heredocDelim
 	if i < len(cmd) && cmd[i] == '-' {
@@ -136,16 +272,12 @@ func parseHeredocDelim(cmd string, i int) (heredocDelim, int, bool) {
 	}
 
 	var sb strings.Builder
-	digitsOnly := true
 scan:
 	for i < len(cmd) {
 		switch ch := cmd[i]; ch {
 		case '\'', '"':
 			i++
 			for i < len(cmd) && cmd[i] != ch {
-				if cmd[i] < '0' || cmd[i] > '9' {
-					digitsOnly = false
-				}
 				sb.WriteByte(cmd[i])
 				i++
 			}
@@ -156,24 +288,18 @@ scan:
 			if i+1 >= len(cmd) {
 				break scan
 			}
-			if cmd[i+1] < '0' || cmd[i+1] > '9' {
-				digitsOnly = false
-			}
 			sb.WriteByte(cmd[i+1])
 			i += 2
 		case ' ', '\t', '\n', ';', '&', '|', '<', '>', '(', ')':
 			break scan
 		default:
-			if ch < '0' || ch > '9' {
-				digitsOnly = false
-			}
 			sb.WriteByte(ch)
 			i++
 		}
 	}
 
 	d.delim = sb.String()
-	if d.delim == "" || digitsOnly {
+	if d.delim == "" {
 		return heredocDelim{}, i, false
 	}
 	return d, i, true

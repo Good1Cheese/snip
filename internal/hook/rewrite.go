@@ -95,6 +95,14 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 	// comment as an operator. Group splitting is deliberately left alone, so
 	// this changes no existing rewrite.
 	inComment := false
+	// Nesting of unquoted "((" arithmetic, where '<<' is a left shift and not a
+	// heredoc operator. Arming a heredoc there would swallow the rest of the
+	// command and silently disable filtering for it (issue #133): "((x = 1 << n))"
+	// would open a heredoc on delimiter "n". Command substitution is rejected
+	// upstream (HasUnverifiableConstruct), so "((" can only be an arithmetic
+	// command here. Reset at every newline so an unbalanced "((" cannot disarm
+	// heredoc detection for the rest of the command.
+	arith := 0
 
 	for i := 0; i < len(cmd); {
 		ch := cmd[i]
@@ -129,7 +137,7 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 					i += 3
 					continue
 				}
-				if !inComment {
+				if !inComment && arith == 0 {
 					if d, next, ok := parseHeredocDelim(cmd, i+2); ok {
 						pending = append(pending, d)
 						heredocGroup = true
@@ -139,12 +147,27 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 				}
 			}
 			i++
+		case '(':
+			if i+1 < len(cmd) && cmd[i+1] == '(' {
+				arith++
+				i += 2
+				continue
+			}
+			i++
+		case ')':
+			if arith > 0 && i+1 < len(cmd) && cmd[i+1] == ')' {
+				arith--
+				i += 2
+				continue
+			}
+			i++
 		case '\n':
 			flush(cmd[groupStart:i])
 			b.WriteByte('\n')
 			i++
 			groupStart = i
 			inComment = false
+			arith = 0
 			if len(pending) > 0 {
 				end := drainHeredocs(cmd, i, pending)
 				b.WriteString(cmd[i:end])
