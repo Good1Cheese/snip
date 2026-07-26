@@ -192,6 +192,14 @@ func (p *Pipeline) Run(command string, args []string) int {
 		}
 	}
 
+	// The drain gave up while a process still held the pipe. Announce it in the
+	// filtered output, the same contract head/tail/truncate_* follow when they
+	// drop lines: the LLM reads stdout, and staying silent would let it treat a
+	// possibly partial capture as the whole story.
+	if result.Truncated {
+		filtered = appendTruncationMarker(filtered)
+	}
+
 	// Tee: save raw output if needed
 	hint := tee.MaybeSave(pipelineInput, result.ExitCode, command, p.TeeConfig)
 
@@ -334,6 +342,26 @@ func (p *Pipeline) Passthrough(command string, args []string) int {
 // rather than sending nothing to the LLM (issue #85).
 func shouldRestoreRaw(filtered, raw string) bool {
 	return strings.TrimSpace(filtered) == "" && strings.TrimSpace(raw) != ""
+}
+
+// truncatedMarker announces that the engine stopped reading with the pipe still
+// held open. It uses the same bracketed [snip: ...] shape as the summary line,
+// since it is the engine speaking rather than a filter action.
+//
+// It says "may be incomplete" rather than "truncated" because the two cases are
+// indistinguishable from inside Execute: a descendant that inherited stdout and
+// went on writing loses output, while one that merely stays alive without
+// writing loses nothing. Both expire the grace period. Claiming loss in the
+// second case would push the agent into re-running a command that in fact
+// returned everything.
+const truncatedMarker = "[snip: output may be incomplete -- a background process held the pipe open]"
+
+// appendTruncationMarker adds truncatedMarker as the last line of out.
+func appendTruncationMarker(out string) string {
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return out + truncatedMarker + "\n"
 }
 
 func (p *Pipeline) summaryEnabled() bool {
