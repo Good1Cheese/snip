@@ -43,6 +43,37 @@ func TestPatchCodexHooksNew(t *testing.T) {
 	}
 }
 
+func TestPatchCodexHooksWhitespaceOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hooks.json")
+	if err := os.WriteFile(path, []byte(" \n\t"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hookCommand := "/usr/local/bin/snip hook codex"
+	if err := patchCodexHooks(path, hookCommand); err != nil {
+		t.Fatalf("patch whitespace-only hooks.json: %v", err)
+	}
+
+	cfg := readSettings(t, path)
+	hooks, ok := cfg["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("hooks not found")
+	}
+	preToolUse, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preToolUse) != 1 {
+		t.Fatalf("PreToolUse = %#v, want one entry", hooks["PreToolUse"])
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+}
+
 func TestPatchCodexHooksIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hooks.json")

@@ -1,6 +1,7 @@
 package initcmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,10 +61,9 @@ func initCodex(snipBin, home, filterDir string) error {
 	fmt.Printf("  config: %s ([features].codex_hooks=true)\n", configPath)
 	fmt.Println()
 	fmt.Println("note: Codex hooks require a recent Codex CLI release that supports")
-	fmt.Println("      the [features].codex_hooks flag. Codex denies matched commands")
-	fmt.Println("      with a re-run suggestion (transparent rewrite is tracked upstream:")
-	fmt.Println("      https://github.com/openai/codex/issues/18491). For older Codex")
-	fmt.Println("      releases use:  snip init --agent codex --mode prompt")
+	fmt.Println("      PreToolUse updatedInput. Supported commands are transparently")
+	fmt.Println("      rewritten through snip. For older Codex releases use:")
+	fmt.Println("      snip init --agent codex --mode prompt")
 	if res.backupWritten {
 		fmt.Printf("      original config.toml backed up to %s.bak (comments are not\n", configPath)
 		fmt.Println("      preserved by the TOML round-trip)")
@@ -341,8 +341,9 @@ func readJSONMap(path string) (map[string]any, os.FileMode, error) {
 	_ = os.WriteFile(path+".bak", data, mode)
 
 	m := make(map[string]any)
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &m); err != nil {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 {
+		if err := json.Unmarshal(trimmed, &m); err != nil {
 			return nil, mode, fmt.Errorf("parse %s: %w", filepath.Base(path), err)
 		}
 	}

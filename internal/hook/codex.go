@@ -12,13 +12,15 @@ import (
 // codexAgent is the value written to hookaudit.Event.Agent for Codex events.
 const codexAgent = "codex"
 
-// RunCodex reads a Codex PreToolUse JSON payload from r, determines if the
-// command matches a snip filter, and writes a deny-with-suggestion response
-// telling Codex (and the user) to re-run the command through snip.
+// RunCodex reads a Codex PreToolUse JSON payload from r, determines whether the
+// command can be safely rewritten through snip, and writes the updated tool
+// input to w. If no safe rewrite is available, nothing is written and Codex
+// executes the original command through its normal permission flow.
 //
-// Codex's PreToolUse hook cannot rewrite the command in place — only "deny"
-// with a free-form reason is honored. See openai/codex#18491. When that
-// limitation is lifted, this function can return updatedInput like Run does.
+// Codex only accepts updatedInput together with permissionDecision "allow".
+// Therefore this handler rewrites a command only when every runnable segment is
+// recognized by snip. Mixed or unverifiable commands pass through unchanged so
+// an unknown segment can never bypass Codex's native approval rules.
 //
 // Always returns nil; the caller must exit 0 (graceful degradation).
 func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []TransparentPrefix, snipBin string) error {
@@ -46,22 +48,28 @@ func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []Transparen
 		return nil
 	}
 
+	// Command substitutions and carriage returns contain executable content that
+	// cannot be safely attested by the segment rewriter. Preserve Codex's native
+	// permission flow by leaving them untouched.
+	if HasUnverifiableConstruct(ti.Command) {
+		return nil
+	}
+
 	cmdSet := make(map[string]struct{}, len(commands))
 	for _, c := range commands {
 		cmdSet[c] = struct{}{}
 	}
 
-	sug := suggestSnipRerun(ti.Command, cmdSet, prefixes, snipBin)
-	if sug.alreadySnip {
-		return nil
-	}
-	if sug.command == "" {
+	res := RewriteCommand(ti.Command, cmdSet, prefixes, snipBin)
+	if !res.Changed || !res.AllKnown {
 		if audit {
+			base := firstBase(ti.Command)
+			_, matched := cmdSet[base]
 			hookaudit.Append(hookaudit.Event{
 				Timestamp: time.Now().UTC(),
 				Command:   ti.Command,
-				Base:      sug.base,
-				Matched:   false,
+				Base:      base,
+				Matched:   matched,
 				Rewritten: false,
 				Agent:     codexAgent,
 			})
@@ -69,13 +77,19 @@ func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []Transparen
 		return nil
 	}
 
-	reason := fmt.Sprintf("snip can filter this command. Re-run as: %s", sug.command)
+	// Preserve every original tool_input field and replace only the command.
+	var originalInput map[string]any
+	if err := json.Unmarshal(input.ToolInput, &originalInput); err != nil {
+		return nil
+	}
+	originalInput["command"] = res.Command
 
 	output := map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "deny",
-			"permissionDecisionReason": reason,
+			"permissionDecision":       "allow",
+			"permissionDecisionReason": "snip auto-rewrite",
+			"updatedInput":             originalInput,
 		},
 	}
 
@@ -83,9 +97,9 @@ func RunCodex(r io.Reader, w io.Writer, commands []string, prefixes []Transparen
 		hookaudit.Append(hookaudit.Event{
 			Timestamp: time.Now().UTC(),
 			Command:   ti.Command,
-			Base:      sug.base,
+			Base:      firstBase(ti.Command),
 			Matched:   true,
-			Rewritten: false,
+			Rewritten: true,
 			Agent:     codexAgent,
 		})
 	}
