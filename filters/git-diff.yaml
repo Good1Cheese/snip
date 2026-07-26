@@ -1,26 +1,139 @@
 name: "git-diff"
-version: 1
-description: "Condensed git diff with stat summary"
+version: 2
+description: "git diff reduced to a diffstat; the patch body is not produced"
 
 match:
   command: "git"
   subcommand: "diff"
-  exclude_flags: ["--stat", "--name-only", "--name-status"]
+  # An explicit request for a patch must produce a patch, so the filter opts out
+  # entirely rather than injecting --stat alongside it (issue #124). Skipping
+  # only the injection was not enough: git emits both, and the head cap then ate
+  # the patch under a message about files.
+  exclude_flags:
+    ["--stat", "--shortstat", "--numstat", "--name-only", "--name-status",
+     "-p", "--patch", "-U", "--unified"]
 
 inject:
-  args: ["--stat"]
+  # --stat-count caps the file list inside git, so git's own accurate
+  # "N files changed, ..." summary line always survives the cap (issue #125).
+  args: ["--stat", "--stat-count=30"]
   skip_if_present: ["--stat", "--name-only", "--name-status"]
 
 pipeline:
+  - action: "strip_ansi"
   - action: "keep_lines"
     pattern: "\\S"
   - action: "truncate_lines"
     max: 100
     ellipsis: "..."
+  # Backstop only: git already caps the list at 30 files, so the output is at
+  # most 32 lines (30 file lines + git's " ..." marker + git's summary line).
+  # Keep n above 32, or git's summary line is cut and the only file count left
+  # in the output is a wrong one (issue #125).
   - action: "head"
-    n: 30
-    overflow_msg: "... and more files"
+    n: 40
+    overflow_msg: "... more lines (truncated by snip)"
+  # No "{{.count}} files changed" header: count was the number of lines reaching
+  # the template, i.e. files + 1 for git's summary line, and pinned at the head
+  # cap + 1 past it (issue #125). git's own summary is already correct and gets
+  # the singular right. The header names the substitution instead, since a
+  # diffstat answers a different question than the one asked (issue #124).
   - action: "format_template"
-    template: "{{.count}} files changed:\n{{.lines}}"
+    template: "diffstat only, patch not produced. Full patch: git diff -p\n{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "git's own summary is kept and snip invents no file count"
+    input: |
+      a.txt | 2 +-
+      b.txt | 2 +-
+      c.txt | 2 +-
+      3 files changed, 3 insertions(+), 3 deletions(-)
+    expected: |
+      diffstat only, patch not produced. Full patch: git diff -p
+      a.txt | 2 +-
+      b.txt | 2 +-
+      c.txt | 2 +-
+      3 files changed, 3 insertions(+), 3 deletions(-)
+
+  - name: "single-file diff keeps git's singular wording"
+    input: |
+      a.txt | 2 +-
+      1 file changed, 1 insertion(+), 1 deletion(-)
+    expected: |
+      diffstat only, patch not produced. Full patch: git diff -p
+      a.txt | 2 +-
+      1 file changed, 1 insertion(+), 1 deletion(-)
+
+  # 32 lines: the shape --stat-count=30 produces past the cap. This is the test
+  # that catches anyone lowering head n back under 32, which is exactly what
+  # makes git's true total disappear.
+  - name: "capped diff keeps git's overflow marker and its true total"
+    input: |
+      f01.txt | 2 +-
+      f02.txt | 2 +-
+      f03.txt | 2 +-
+      f04.txt | 2 +-
+      f05.txt | 2 +-
+      f06.txt | 2 +-
+      f07.txt | 2 +-
+      f08.txt | 2 +-
+      f09.txt | 2 +-
+      f10.txt | 2 +-
+      f11.txt | 2 +-
+      f12.txt | 2 +-
+      f13.txt | 2 +-
+      f14.txt | 2 +-
+      f15.txt | 2 +-
+      f16.txt | 2 +-
+      f17.txt | 2 +-
+      f18.txt | 2 +-
+      f19.txt | 2 +-
+      f20.txt | 2 +-
+      f21.txt | 2 +-
+      f22.txt | 2 +-
+      f23.txt | 2 +-
+      f24.txt | 2 +-
+      f25.txt | 2 +-
+      f26.txt | 2 +-
+      f27.txt | 2 +-
+      f28.txt | 2 +-
+      f29.txt | 2 +-
+      f30.txt | 2 +-
+      ...
+      40 files changed, 40 insertions(+), 40 deletions(-)
+    expected: |
+      diffstat only, patch not produced. Full patch: git diff -p
+      f01.txt | 2 +-
+      f02.txt | 2 +-
+      f03.txt | 2 +-
+      f04.txt | 2 +-
+      f05.txt | 2 +-
+      f06.txt | 2 +-
+      f07.txt | 2 +-
+      f08.txt | 2 +-
+      f09.txt | 2 +-
+      f10.txt | 2 +-
+      f11.txt | 2 +-
+      f12.txt | 2 +-
+      f13.txt | 2 +-
+      f14.txt | 2 +-
+      f15.txt | 2 +-
+      f16.txt | 2 +-
+      f17.txt | 2 +-
+      f18.txt | 2 +-
+      f19.txt | 2 +-
+      f20.txt | 2 +-
+      f21.txt | 2 +-
+      f22.txt | 2 +-
+      f23.txt | 2 +-
+      f24.txt | 2 +-
+      f25.txt | 2 +-
+      f26.txt | 2 +-
+      f27.txt | 2 +-
+      f28.txt | 2 +-
+      f29.txt | 2 +-
+      f30.txt | 2 +-
+      ...
+      40 files changed, 40 insertions(+), 40 deletions(-)

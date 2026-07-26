@@ -1,22 +1,57 @@
 name: "git-show"
-version: 1
-description: "Condensed git show: commit header and diffstat"
+version: 2
+description: "git show reduced to commit header and diffstat; the patch body is not produced"
 
 match:
   command: "git"
   subcommand: "show"
-  exclude_flags: ["--stat", "--format", "--pretty", "--name-only", "--name-status"]
+  # An explicit request for a patch must produce a patch (issue #124). -p and
+  # --patch were in skip_if_present, which stopped the injection but not the
+  # head cap: git produced the patch and snip then kept 4 of 196 patch lines
+  # under a message about files.
+  exclude_flags:
+    ["--stat", "--format", "--pretty", "--name-only", "--name-status",
+     "-p", "--patch", "-U", "--unified"]
 
 inject:
-  args: ["--stat"]
-  skip_if_present: ["--stat", "--format", "--pretty", "--name-only", "--name-status", "-p", "--patch"]
+  # --stat-count caps the file list inside git, so git's own accurate
+  # "N files changed, ..." summary line always survives the cap (issue #125).
+  args: ["--stat", "--stat-count=30"]
+  skip_if_present: ["--stat", "--format", "--pretty", "--name-only", "--name-status"]
 
 pipeline:
   - action: "strip_ansi"
   - action: "keep_lines"
     pattern: "\\S"
+  # Above the 32 lines --stat-count=30 can produce plus the commit header, so
+  # git's own "N files changed, ..." total is never the line that gets cut.
   - action: "head"
-    n: 30
-    overflow_msg: "... more files changed"
+    n: 45
+    overflow_msg: "... more lines (truncated by snip)"
+  # Name the substitution: a diffstat answers a different question than the one
+  # asked, and unlike a cap there is no marker that can express content which
+  # was never produced (issue #124).
+  - action: "format_template"
+    template: "diffstat only, patch not produced. Full patch: git show -p <rev>\n{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "commit header and diffstat are kept and labelled as a substitution"
+    input: |
+      commit eb5fc8c97545f66f319143470651703aaee53991
+      Author: Repro <r@example.com>
+      Date:   Sun Jul 26 08:38:02 2026 +0400
+
+          refactor(engine): extract resultFrom
+
+       internal/engine/executor.go | 52 +++++++++++++++-----------
+       1 file changed, 32 insertions(+), 20 deletions(-)
+    expected: |
+      diffstat only, patch not produced. Full patch: git show -p <rev>
+      commit eb5fc8c97545f66f319143470651703aaee53991
+      Author: Repro <r@example.com>
+      Date:   Sun Jul 26 08:38:02 2026 +0400
+          refactor(engine): extract resultFrom
+       internal/engine/executor.go | 52 +++++++++++++++-----------
+       1 file changed, 32 insertions(+), 20 deletions(-)
