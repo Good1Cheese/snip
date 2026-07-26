@@ -118,13 +118,24 @@ func (p *Pipeline) Run(command string, args []string) int {
 
 	// Execute command
 	result, err := Execute(command, finalArgs)
-	if err != nil {
-		// Execution failed entirely — fallback to passthrough
+	if result == nil {
+		// The command never ran, so fall back to passthrough. A non-nil result
+		// with a non-nil err means it did run, and re-running it here would
+		// repeat its side effects.
 		if p.Verbose > 0 {
 			fmt.Fprintf(os.Stderr, "snip: execute error: %v\n", err)
 		}
-		code, _ := Passthrough(command, fullArgs)
+		code, perr := Passthrough(command, fullArgs)
+		if perr != nil && p.Verbose > 0 {
+			fmt.Fprintf(os.Stderr, "snip: passthrough error: %v\n", perr)
+		}
 		return code
+	}
+	if err != nil {
+		// The command ran, so its output below is good, but its exit status was
+		// lost with the bookkeeping and is reported as 0. Say so unconditionally
+		// rather than let a command of unknown status look like a success.
+		fmt.Fprintf(os.Stderr, "snip: %v (exit status unknown, reporting 0)\n", err)
 	}
 
 	// Build pipeline input from selected streams

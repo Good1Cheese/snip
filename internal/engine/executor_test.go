@@ -56,6 +56,37 @@ func TestExecuteNotFound(t *testing.T) {
 	}
 }
 
+// A nil *Result is how Execute signals "the command never ran". An error does
+// not carry that meaning, since it can also mean the command ran to completion
+// and only the wait bookkeeping failed. Callers decide from the Result whether
+// re-running is safe, so this invariant has to hold.
+func TestExecuteNilResultOnlyWhenNeverStarted(t *testing.T) {
+	result, err := Execute("nonexistent-command-xyz", nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent command")
+	}
+	if result != nil {
+		t.Errorf("result must be nil when the command never started, got %+v", result)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	result, err = Execute("sh", []string{"-c", "echo out; echo err >&2; exit 3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result must be non-nil for a command that ran")
+	}
+	if result.ExitCode != 3 {
+		t.Errorf("exit code = %d, want 3", result.ExitCode)
+	}
+	if strings.TrimSpace(result.Stdout) != "out" || strings.TrimSpace(result.Stderr) != "err" {
+		t.Errorf("output not captured: stdout=%q stderr=%q", result.Stdout, result.Stderr)
+	}
+}
+
 func TestPassthrough(t *testing.T) {
 	code, err := Passthrough("echo", []string{"test"})
 	if err != nil {

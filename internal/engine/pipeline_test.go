@@ -586,3 +586,51 @@ func TestApplyOverrideNilParamsDoesNotPanic(t *testing.T) {
 		t.Errorf("keep_lines pattern = %v, want error|warn", f.Pipeline[1].Params["pattern"])
 	}
 }
+
+// Run falls back to Passthrough only on a nil *Result, the one case where
+// re-running the command is safe. The filter matches so Run reaches Execute,
+// and the command does not exist so Execute returns nil. Run must fall back
+// rather than dereference the nil Result.
+func TestPipelineRunFallsBackWhenCommandNeverRan(t *testing.T) {
+	const missing = "nonexistent-command-xyz"
+	f := filter.Filter{
+		Name:    "missing-tool",
+		Version: 1,
+		Match:   filter.Match{Command: missing},
+		OnError: "passthrough",
+		Pipeline: filter.Pipeline{
+			{ActionName: "keep_lines", Params: map[string]any{"pattern": `.`}},
+		},
+	}
+	p := &Pipeline{
+		Registry: filter.NewRegistry([]filter.Filter{f}),
+		Verbose:  1,
+	}
+
+	// NOTE: not safe under t.Parallel() since os.Stderr is global.
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	code := p.Run(missing, nil)
+
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	os.Stderr = oldStderr
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 from the passthrough fallback", code)
+	}
+	// Both errors are reported under -v: the one that triggered the fallback and
+	// the fallback's own.
+	for _, want := range []string{"execute error", "passthrough error"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("stderr missing %q, got %q", want, buf.String())
+		}
+	}
+}

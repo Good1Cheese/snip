@@ -92,6 +92,11 @@ func makeCommand(command string, args []string) *exec.Cmd {
 }
 
 // Execute runs a command, capturing stdout and stderr concurrently via goroutines.
+//
+// A nil *Result means the command never ran. When the returned *Result is
+// non-nil the command did run, even if err is also non-nil: err then reports a
+// failure in the wait bookkeeping rather than in the command itself. Callers
+// must decide whether re-running is safe from the *Result rather than from err.
 func Execute(command string, args []string) (*Result, error) {
 	start := time.Now()
 
@@ -147,12 +152,17 @@ func Execute(command string, args []string) (*Result, error) {
 	}()
 
 	exitCode := 0
+	var waitErr error
 	err = cmd.Wait()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			return nil, fmt.Errorf("wait command: %w", err)
+			// The command ran to completion; only the wait bookkeeping failed.
+			// Report the error, but still return the Result so the caller does
+			// not re-run a command whose side effects have already happened.
+			// The exit status went missing with the bookkeeping, so it stays 0.
+			waitErr = fmt.Errorf("wait command: %w", err)
 		}
 	}
 
@@ -172,7 +182,7 @@ func Execute(command string, args []string) (*Result, error) {
 		Stderr:   stderrBuf.String(),
 		ExitCode: exitCode,
 		Duration: time.Since(start),
-	}, nil
+	}, waitErr
 }
 
 // Passthrough runs a command with inherited stdio (no capture).
