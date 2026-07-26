@@ -1,5 +1,5 @@
 name: "rails-routes"
-version: 1
+version: 2
 description: "Summarized rails routes with count and truncation"
 
 match:
@@ -12,12 +12,80 @@ pipeline:
     pattern: "\\S"
   - action: "remove_lines"
     pattern: "^\\s*Prefix"
+  # append keeps the route table: without it, aggregate replaces the lines it counts
   - action: "aggregate"
     patterns:
       routes: "(GET|POST|PUT|PATCH|DELETE)"
+    append: true
+  # the count is carried by .stats, so drop the summary line aggregate appended
+  - action: "remove_lines"
+    pattern: "^routes: \\d+$"
+  # head announces its own truncation with "+N more lines"
   - action: "head"
     n: 15
   - action: "format_template"
-    template: "{{with .stats}}{{.routes}} routes total{{end}} (showing first 15):\n{{.lines}}"
+    template: "{{with .stats}}{{if .routes}}{{.routes}} routes:{{else}}no routes{{end}}{{end}}\n{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "route table survives the count summary"
+    input: |
+      Prefix Verb   URI Pattern                Controller#Action
+        root GET    /                          home#index
+       users GET    /users(.:format)           users#index
+             POST   /users(.:format)           users#create
+        user GET    /users/:id(.:format)       users#show
+             PATCH  /users/:id(.:format)       users#update
+             DELETE /users/:id(.:format)       users#destroy
+    expected: |
+      6 routes:
+        root GET    /                          home#index
+       users GET    /users(.:format)           users#index
+             POST   /users(.:format)           users#create
+        user GET    /users/:id(.:format)       users#show
+             PATCH  /users/:id(.:format)       users#update
+             DELETE /users/:id(.:format)       users#destroy
+  - name: "more than 15 routes are capped and the overflow is announced"
+    input: |
+      Prefix Verb   URI Pattern                Controller#Action
+        root GET    /                          home#index
+       users GET    /users(.:format)           users#index
+             POST   /users(.:format)           users#create
+        user GET    /users/:id(.:format)       users#show
+             PATCH  /users/:id(.:format)       users#update
+             DELETE /users/:id(.:format)       users#destroy
+       posts GET    /posts(.:format)           posts#index
+             POST   /posts(.:format)           posts#create
+        post GET    /posts/:id(.:format)       posts#show
+             PATCH  /posts/:id(.:format)       posts#update
+             DELETE /posts/:id(.:format)       posts#destroy
+        tags GET    /tags(.:format)            tags#index
+             POST   /tags(.:format)            tags#create
+         tag GET    /tags/:id(.:format)        tags#show
+             PATCH  /tags/:id(.:format)        tags#update
+             DELETE /tags/:id(.:format)        tags#destroy
+      health GET    /health(.:format)          health#show
+    expected: |
+      17 routes:
+        root GET    /                          home#index
+       users GET    /users(.:format)           users#index
+             POST   /users(.:format)           users#create
+        user GET    /users/:id(.:format)       users#show
+             PATCH  /users/:id(.:format)       users#update
+             DELETE /users/:id(.:format)       users#destroy
+       posts GET    /posts(.:format)           posts#index
+             POST   /posts(.:format)           posts#create
+        post GET    /posts/:id(.:format)       posts#show
+             PATCH  /posts/:id(.:format)       posts#update
+             DELETE /posts/:id(.:format)       posts#destroy
+        tags GET    /tags(.:format)            tags#index
+             POST   /tags(.:format)            tags#create
+         tag GET    /tags/:id(.:format)        tags#show
+             PATCH  /tags/:id(.:format)        tags#update
+      +2 more lines
+  - name: "header only means no routes"
+    input: |
+      Prefix Verb URI Pattern Controller#Action
+    expected: |
+      no routes
