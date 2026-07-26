@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"errors"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -85,6 +87,83 @@ func TestExecuteNilResultOnlyWhenNeverStarted(t *testing.T) {
 	if strings.TrimSpace(result.Stdout) != "out" || strings.TrimSpace(result.Stderr) != "err" {
 		t.Errorf("output not captured: stdout=%q stderr=%q", result.Stdout, result.Stderr)
 	}
+}
+
+// resultFrom holds the whole post-wait decision of Execute. Its non-ExitError
+// branch is the one issue #119 is about, and no real command can reach it: the
+// Go runtime owns SIGCHLD and os/exec offers no seam on the wait syscall. So it
+// is exercised here directly, on the helper.
+func TestResultFrom(t *testing.T) {
+	const (
+		stdout = "captured out\n"
+		stderr = "captured err\n"
+	)
+	const dur = 7 * time.Millisecond
+
+	t.Run("wait bookkeeping failed", func(t *testing.T) {
+		boom := errors.New("boom")
+
+		result, err := resultFrom(boom, stdout, stderr, dur)
+
+		if err == nil {
+			t.Fatal("a non-ExitError from wait must be reported")
+		}
+		if !errors.Is(err, boom) {
+			t.Errorf("error must wrap the wait error, got %v", err)
+		}
+		if result == nil {
+			t.Fatal("result must be non-nil: the command ran and re-running it would repeat its side effects")
+		}
+		if result.Stdout != stdout || result.Stderr != stderr {
+			t.Errorf("captured output lost: stdout=%q stderr=%q", result.Stdout, result.Stderr)
+		}
+		if result.Duration != dur {
+			t.Errorf("duration = %v, want %v", result.Duration, dur)
+		}
+	})
+
+	t.Run("exit error", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("skip on windows")
+		}
+		waitErr := exec.Command("sh", "-c", "exit 3").Run()
+		var exitErr *exec.ExitError
+		if !errors.As(waitErr, &exitErr) {
+			t.Fatalf("setup: want *exec.ExitError, got %T (%v)", waitErr, waitErr)
+		}
+
+		result, err := resultFrom(waitErr, stdout, stderr, dur)
+
+		if err != nil {
+			t.Fatalf("a failing command is not an error of Execute, got %v", err)
+		}
+		if result == nil {
+			t.Fatal("result must be non-nil")
+		}
+		if result.ExitCode != 3 {
+			t.Errorf("exit code = %d, want 3", result.ExitCode)
+		}
+		if result.Stdout != stdout || result.Stderr != stderr {
+			t.Errorf("captured output lost: stdout=%q stderr=%q", result.Stdout, result.Stderr)
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		result, err := resultFrom(nil, stdout, stderr, dur)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("result must be non-nil")
+		}
+		if result.ExitCode != 0 {
+			t.Errorf("exit code = %d, want 0", result.ExitCode)
+		}
+		if result.Stdout != stdout || result.Stderr != stderr {
+			t.Errorf("captured output lost: stdout=%q stderr=%q", result.Stdout, result.Stderr)
+		}
+	})
 }
 
 func TestPassthrough(t *testing.T) {

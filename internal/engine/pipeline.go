@@ -32,6 +32,19 @@ type Pipeline struct {
 	// TrackUnfiltered records no-filter passthrough commands for coverage
 	// analysis (issue #96). Off keeps the passthrough path free of extra work.
 	TrackUnfiltered bool
+	// execute runs the command. nil means Execute, which is what production
+	// always uses. It exists so tests can return a Result together with an
+	// error — the "the command ran, only its bookkeeping failed" case that no
+	// real command can be made to produce.
+	execute func(command string, args []string) (*Result, error)
+}
+
+// runCommand executes the command through the pipeline's executor.
+func (p *Pipeline) runCommand(command string, args []string) (*Result, error) {
+	if p.execute != nil {
+		return p.execute(command, args)
+	}
+	return Execute(command, args)
 }
 
 // Run executes a command through the full pipeline.
@@ -117,7 +130,7 @@ func (p *Pipeline) Run(command string, args []string) int {
 	timed := tracking.Start(p.Tracker)
 
 	// Execute command
-	result, err := Execute(command, finalArgs)
+	result, err := p.runCommand(command, finalArgs)
 	if result == nil {
 		// The command never ran, so fall back to passthrough. A non-nil result
 		// with a non-nil err means it did run, and re-running it here would
