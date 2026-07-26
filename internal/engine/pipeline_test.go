@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/edouard-claude/snip/internal/config"
 	"github.com/edouard-claude/snip/internal/filter"
@@ -632,5 +633,90 @@ func TestPipelineRunFallsBackWhenCommandNeverRan(t *testing.T) {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("stderr missing %q, got %q", want, buf.String())
 		}
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// was written. NOTE: not safe under t.Parallel() since os.Stdout is global.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	os.Stdout = old
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
+// shPassthroughFilter matches "sh" and keeps every line, so the filtered output
+// is the raw output plus whatever the engine adds.
+func shPassthroughFilter() filter.Filter {
+	return filter.Filter{
+		Name:    "sh-passthrough",
+		Version: 1,
+		Match:   filter.Match{Command: "sh"},
+		OnError: "passthrough",
+		Pipeline: filter.Pipeline{
+			{ActionName: "keep_lines", Params: map[string]any{"pattern": `.`}},
+		},
+	}
+}
+
+// A background descendant holding the pipe makes the engine drop output. The
+// LLM reading the filtered result is the consumer that matters, so the loss is
+// announced in that result rather than only on stderr.
+func TestPipelineRunMarksOutputDroppedByDrainGrace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	shrinkDrainGrace(t, 50*time.Millisecond)
+
+	p := &Pipeline{Registry: filter.NewRegistry([]filter.Filter{shPassthroughFilter()})}
+	out := captureStdout(t, func() {
+		p.Run("sh", []string{"-c", "(sleep 1; echo LATE) & echo early"})
+	})
+
+	if !strings.Contains(out, "early") {
+		t.Errorf("stdout lost the command's own output, got %q", out)
+	}
+	if strings.Contains(out, "LATE") {
+		t.Fatalf("premise broken: the late write was not dropped, got %q", out)
+	}
+	if !strings.Contains(out, truncatedMarker) {
+		t.Errorf("stdout missing the truncation marker, got %q", out)
+	}
+}
+
+// A command whose output drains completely must not carry the marker, or every
+// invocation would warn about a loss that did not happen.
+func TestPipelineRunDoesNotMarkCompleteOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+
+	p := &Pipeline{Registry: filter.NewRegistry([]filter.Filter{shPassthroughFilter()})}
+	out := captureStdout(t, func() {
+		p.Run("sh", []string{"-c", "echo complete"})
+	})
+
+	if !strings.Contains(out, "complete") {
+		t.Fatalf("premise broken: missing command output, got %q", out)
+	}
+	if strings.Contains(out, truncatedMarker) {
+		t.Errorf("stdout carries the truncation marker for complete output: %q", out)
 	}
 }

@@ -183,6 +183,48 @@ func TestExecuteDoesNotWaitForBackgroundDescendants(t *testing.T) {
 	}
 }
 
+// shrinkDrainGrace lowers the drain grace period for the duration of a test so
+// the truncation boundary can be forced without a multi-second wait.
+func shrinkDrainGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := drainGrace
+	drainGrace = d
+	t.Cleanup(func() { drainGrace = old })
+}
+
+// Dropping the late output is the intended trade-off, but the caller must be
+// able to tell that it happened: unflagged truncation is indistinguishable from
+// complete output.
+func TestExecuteFlagsTruncatedWhenDrainGraceExpires(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	shrinkDrainGrace(t, 50*time.Millisecond)
+
+	result, err := Execute("sh", []string{"-c", "(sleep 1; echo LATE) & echo early"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.TrimSpace(result.Stdout); got != "early" {
+		t.Fatalf("stdout = %q, want %q", got, "early")
+	}
+	if !result.Truncated {
+		t.Error("Result.Truncated = false, want true: the drain gave up with output still pending")
+	}
+}
+
+// The flag must stay off for the overwhelmingly common case, or every command
+// would carry a truncation warning.
+func TestExecuteDoesNotFlagTruncatedForCompleteOutput(t *testing.T) {
+	result, err := Execute("echo", []string{"hello"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Truncated {
+		t.Error("Result.Truncated = true, want false: the command's output was fully drained")
+	}
+}
+
 // Output well past the pipe buffer makes the command block on write until the
 // reader drains. Nothing may be truncated, and neither side may deadlock.
 func TestExecuteLargeOutput(t *testing.T) {

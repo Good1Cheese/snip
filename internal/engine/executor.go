@@ -13,7 +13,10 @@ import (
 // drainGrace bounds how long Execute keeps reading output after the command
 // itself has exited. Descendants it left running inherit the pipe write ends,
 // so an unbounded drain waits for the longest-lived of them.
-const drainGrace = 100 * time.Millisecond
+//
+// A var rather than a const so tests can shrink it and force the boundary
+// deterministically instead of waiting out the real window.
+var drainGrace = 100 * time.Millisecond
 
 // syncBuffer collects one captured stream. Access is guarded because Execute
 // may read the buffer while its reader goroutine is still blocked: a descendant
@@ -43,6 +46,10 @@ type Result struct {
 	Stderr   string
 	ExitCode int
 	Duration time.Duration
+	// Truncated reports that the drain grace period expired with the pipes
+	// still open, so Stdout and Stderr hold only what had been read by then.
+	// Without it, a partial capture is indistinguishable from a full one.
+	Truncated bool
 }
 
 // shellBuiltins lists commands that are shell built-ins and cannot be
@@ -170,18 +177,26 @@ func Execute(command string, args []string) (*Result, error) {
 	// still holds the write ends, so the readers would block for that process's
 	// lifetime. Give them a grace period to drain what is already buffered, then
 	// close the read ends and take whatever they captured.
+	//
+	// Giving up here means output may still have been in flight, so record that
+	// the capture is partial. The flag is written on this goroutine only, before
+	// the Result is built: the reader goroutines never touch it, so no lock is
+	// needed for it (unlike the buffers they are still writing to).
+	truncated := false
 	select {
 	case <-drained:
 	case <-time.After(drainGrace):
+		truncated = true
 		_ = stdoutR.Close()
 		_ = stderrR.Close()
 	}
 
 	return &Result{
-		Stdout:   stdoutBuf.String(),
-		Stderr:   stderrBuf.String(),
-		ExitCode: exitCode,
-		Duration: time.Since(start),
+		Stdout:    stdoutBuf.String(),
+		Stderr:    stderrBuf.String(),
+		ExitCode:  exitCode,
+		Duration:  time.Since(start),
+		Truncated: truncated,
 	}, waitErr
 }
 
