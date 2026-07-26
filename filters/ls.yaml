@@ -1,5 +1,5 @@
 name: "ls"
-version: 2
+version: 3
 description: "Compact ls output: reformats long listings to date+name+size, removes noise, extension summary"
 
 match:
@@ -19,7 +19,6 @@ pipeline:
   - action: "replace"
     pattern: "^\\S+\\s+\\d+\\s+.*\\s(\\d\\S*)\\s+(\\S+\\s+\\S+\\s+[\\d:]{4,5})\\s+(.+)$"
     replacement: "$2  $3  $1"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

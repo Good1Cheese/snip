@@ -1,12 +1,11 @@
 name: "find"
-version: 1
-description: "Condensed find output: compacts paths and truncates"
+version: 2
+description: "Condensed find output: truncates long paths and limits results"
 
 match:
   command: "find"
 
 pipeline:
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 100
   - action: "head"

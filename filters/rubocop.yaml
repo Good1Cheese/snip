@@ -1,5 +1,5 @@
 name: "rubocop"
-version: 1
+version: 2
 description: "Condensed rubocop output: offenses by file"
 
 match:
@@ -16,7 +16,6 @@ pipeline:
     pattern: "(^Inspecting|^\\.+$|^\\s*$)"
   - action: "keep_lines"
     pattern: "(^[A-Z]:|offenses? detected|no offenses|files? inspected|error|warning|convention)"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

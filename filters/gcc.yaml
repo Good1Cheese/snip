@@ -1,5 +1,5 @@
 name: "gcc"
-version: 1
+version: 2
 description: "Condensed gcc/g++ output: errors and warnings"
 
 match:
@@ -14,7 +14,6 @@ pipeline:
   - action: "strip_ansi"
   - action: "keep_lines"
     pattern: "(error:|warning:|note:|fatal error|undefined reference|linker|ld:|In function)"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

@@ -1,5 +1,5 @@
 name: "prettier"
-version: 1
+version: 2
 description: "Condensed prettier output: formatting issues"
 
 match:
@@ -13,7 +13,6 @@ pipeline:
   - action: "strip_ansi"
   - action: "remove_lines"
     pattern: "^\\s*$"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

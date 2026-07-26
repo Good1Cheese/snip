@@ -73,7 +73,7 @@ on_error: "passthrough"          # What to do if the pipeline fails: "passthroug
 |--------|--------|-------------|
 | `truncate_lines` | `max` (int, default 80), `ellipsis` (string, default "...") | Truncate long lines |
 | `strip_ansi` | (none) | Remove ANSI escape codes |
-| `compact_path` | (none) | Remove directory prefixes from file paths |
+| `compact_path` | (none) | Strips a leading `src/`/`lib/`/`internal/`/`pkg/`/`vendor/` segment. The result may not resolve from the cwd, and carries no marker saying so — no bundled filter uses it. Display-only paths only. |
 
 ### Extraction & Grouping
 

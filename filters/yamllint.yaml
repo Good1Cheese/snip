@@ -1,5 +1,5 @@
 name: "yamllint"
-version: 1
+version: 2
 description: "Condensed yamllint output: issues by file"
 
 match:
@@ -11,7 +11,6 @@ streams:
 
 pipeline:
   - action: "strip_ansi"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"

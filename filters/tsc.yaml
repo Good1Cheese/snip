@@ -1,5 +1,5 @@
 name: "tsc"
-version: 3
+version: 4
 description: "Condensed tsc output: type errors and summary"
 
 match:
@@ -24,7 +24,6 @@ pipeline:
   # Keep error lines and summary
   - action: "keep_lines"
     pattern: "(error TS\\d+|warning TS\\d+|Found \\d+ error)"
-  - action: "compact_path"
   - action: "truncate_lines"
     max: 120
   - action: "head"
@@ -55,8 +54,8 @@ tests:
 
       Found 2 errors in 2 files.
     expected: |
-      index.ts:3:1 - error TS2304: Cannot find name 'foo'.
-      utils.ts:10:5 - error TS2322: Type 'string' is not assignable to type 'number'.
+      src/index.ts:3:1 - error TS2304: Cannot find name 'foo'.
+      src/utils.ts:10:5 - error TS2322: Type 'string' is not assignable to type 'number'.
       Found 2 errors in 2 files.
   - name: "classic format errors"
     input: |
@@ -64,6 +63,6 @@ tests:
       src/utils.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.
       Found 2 errors in 2 files.
     expected: |
-      index.ts(3,1): error TS2304: Cannot find name 'foo'.
-      utils.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.
+      src/index.ts(3,1): error TS2304: Cannot find name 'foo'.
+      src/utils.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.
       Found 2 errors in 2 files.
