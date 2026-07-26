@@ -55,7 +55,7 @@ on_error: "passthrough"          # What to do if the pipeline fails: "passthroug
 - `defaults` only apply if their flag key is not already present in the user's args.
 - If any flag in `skip_if_present` is found, the entire inject block is skipped.
 
-## The 16 Pipeline Actions
+## The 17 Pipeline Actions
 
 ### Line Filtering
 
@@ -72,6 +72,7 @@ on_error: "passthrough"          # What to do if the pipeline fails: "passthroug
 | Action | Params | Description |
 |--------|--------|-------------|
 | `truncate_lines` | `max` (int, default 80), `ellipsis` (string, default "...") | Truncate long lines |
+| `truncate_bytes` | `max` (int, 0=disabled), `overflow_msg` (string, default "... truncated at {max} bytes") | Cap the whole output at `max` bytes, cutting on a UTF-8 rune boundary. The marker is paid for out of `max`, and is dropped when it alone would not fit |
 | `strip_ansi` | (none) | Remove ANSI escape codes |
 | `compact_path` | (none) | Strips a leading `src/`/`lib/`/`internal/`/`pkg/`/`vendor/` segment. The result may not resolve from the cwd, and carries no marker saying so — no bundled filter uses it. Display-only paths only. |
 

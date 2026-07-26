@@ -152,17 +152,30 @@ func truncateBytes(input ActionResult, params map[string]any) (ActionResult, err
 	if len(joined) <= max {
 		return input, nil
 	}
-	// Back off to a UTF-8 rune boundary so we never emit a partial rune.
-	cut := max
-	for cut > 0 && !utf8.RuneStart(joined[cut]) {
-		cut--
-	}
 	msg := getStr(params, "overflow_msg")
 	if msg == "" {
 		msg = fmt.Sprintf("... truncated at %d bytes", max)
 	}
+	// The marker is paid for out of the budget: max is a hard cap on the bytes
+	// we emit, so reserve len(msg) plus the newline that joins it before cutting.
+	budget := max - len(msg) - 1
+	if budget <= 0 {
+		// The marker alone does not fit; emitting it would blow the cap, so
+		// drop it and spend the whole budget on content.
+		budget = max
+		msg = ""
+	}
+	// Back off to a UTF-8 rune boundary so we never emit a partial rune.
+	cut := budget
+	for cut > 0 && !utf8.RuneStart(joined[cut]) {
+		cut--
+	}
 	// Split allocates a fresh slice, so the append never aliases input.Lines.
-	input.Lines = append(strings.Split(joined[:cut], "\n"), msg)
+	out := strings.Split(joined[:cut], "\n")
+	if msg != "" {
+		out = append(out, msg)
+	}
+	input.Lines = out
 	return input, nil
 }
 
