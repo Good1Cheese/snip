@@ -449,6 +449,12 @@ dir = "~/.config/snip/filters"
 [filters.enable]
 # git-diff = false       # disable a specific built-in filter
 
+[filters.global]
+# max_output_bytes = 65536  # hard cap on the bytes any filter emits (0 = unlimited).
+                            # Applied last, cutting on a UTF-8 rune boundary and
+                            # appending a "... truncated at N bytes" marker that is
+                            # counted inside the cap.
+
 [tee]
 enabled = true
 mode = "failures"    # "failures" | "always" | "never"

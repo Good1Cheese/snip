@@ -108,14 +108,16 @@ func TestTruncateBytesEmoji(t *testing.T) {
 }
 
 func TestTruncateBytesMarker(t *testing.T) {
-	original := []string{"aaaaaaaaaa", "bbbbbbbbbb"}
+	const max = 70
+	original := []string{strings.Repeat("a", 40), strings.Repeat("b", 40)}
 	input := ActionResult{Lines: original, Metadata: nil}
-	res, err := truncateBytes(input, map[string]any{"max": 5})
+	res, err := truncateBytes(input, map[string]any{"max": max})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The kept bytes come first, the marker last.
-	want := []string{"aaaaa", "... truncated at 5 bytes"}
+	// The kept bytes come first, the marker last, and the marker is paid for
+	// out of the budget: 44 kept bytes + "\n" + 25 marker bytes = 70.
+	want := []string{strings.Repeat("a", 40), strings.Repeat("b", 3), "... truncated at 70 bytes"}
 	if len(res.Lines) != len(want) {
 		t.Fatalf("got %v, want %v", res.Lines, want)
 	}
@@ -124,20 +126,49 @@ func TestTruncateBytesMarker(t *testing.T) {
 			t.Errorf("line %d = %q, want %q", i, res.Lines[i], want[i])
 		}
 	}
+	if got := len(strings.Join(res.Lines, "\n")); got > max {
+		t.Errorf("output is %d bytes, over the %d-byte cap", got, max)
+	}
 	// Appending the marker must not write into the caller's backing array.
-	if original[1] != "bbbbbbbbbb" {
+	if original[1] != strings.Repeat("b", 40) {
 		t.Errorf("input slice mutated: %v", original)
 	}
 }
 
 func TestTruncateBytesCustomOverflowMsg(t *testing.T) {
+	const max = 20
 	input := lines("aaaaaaaaaa", "bbbbbbbbbb")
-	res, err := truncateBytes(input, map[string]any{"max": 5, "overflow_msg": "[cut]"})
+	res, err := truncateBytes(input, map[string]any{"max": max, "overflow_msg": "[cut]"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Lines[len(res.Lines)-1] != "[cut]" {
 		t.Errorf("custom overflow msg: %v", res.Lines)
+	}
+	if got := len(strings.Join(res.Lines, "\n")); got > max {
+		t.Errorf("output is %d bytes, over the %d-byte cap", got, max)
+	}
+}
+
+func TestTruncateBytesRespectsCap(t *testing.T) {
+	// Multi-byte input so rune-boundary back-off is exercised at every cap.
+	input := lines(
+		strings.Repeat("héllo wörld ", 20),
+		strings.Repeat("🎉 café ", 20),
+		strings.Repeat("naïve ", 20),
+	)
+	for _, max := range []int{1, 2, 3, 7, 24, 25, 26, 40, 100, 512, 4096} {
+		res, err := truncateBytes(input, map[string]any{"max": max})
+		if err != nil {
+			t.Fatalf("max=%d: %v", max, err)
+		}
+		out := strings.Join(res.Lines, "\n")
+		if len(out) > max {
+			t.Errorf("max=%d: output is %d bytes, over the cap: %q", max, len(out), out)
+		}
+		if !utf8.ValidString(out) {
+			t.Errorf("max=%d: output is not valid UTF-8: %q", max, out)
+		}
 	}
 }
 
