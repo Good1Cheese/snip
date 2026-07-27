@@ -180,8 +180,8 @@ on_error: "passthrough"
 
 ```yaml
 name: "cargo-test"
-version: 1
-description: "Condensed cargo test output"
+version: 2
+description: "cargo test summary lines, plus the failure report when a test fails"
 match:
   command: "cargo"
   subcommand: "test"
@@ -193,22 +193,24 @@ pipeline:
   - action: "state_machine"
     states:
       start:
-        keep: "^(test |running |test result)"
+        keep: "^test result"
         until: "^failures"
         next: "failures"
       failures:
         keep: "."
-        until: "^$"
-        next: "done"
-  - action: "aggregate"
-    patterns:
-      pass: "\\.\\.\\. ok$"
-      fail: "\\.\\.\\. FAILED$"
-      ignored: "\\.\\.\\. ignored$"
+  - action: "head"
+    n: 150
   - action: "format_template"
     template: "{{.lines}}"
 on_error: "passthrough"
 ```
+
+The `until` on `start` is what makes this safe. Everything after the first
+`failures:` line is the failure report, and a panic message can hold any text at
+all — including a line that looks exactly like a test result. So every stage that
+drops or counts lines has to sit on the `start` side of that boundary, which
+`keep` does. A `remove_lines` placed after the state machine would instead run
+over the panic messages and delete them.
 
 ## Workflow to Create a New Filter
 

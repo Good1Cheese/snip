@@ -1,6 +1,6 @@
 name: "cargo-test"
-version: 1
-description: "Condensed cargo test output"
+version: 2
+description: "cargo test summary lines, plus the failure report when a test fails"
 
 match:
   command: "cargo"
@@ -11,22 +11,281 @@ pipeline:
     pattern: "^\\s*(Compiling|Downloading|Downloaded|Updating|Running|Executable)"
   - action: "keep_lines"
     pattern: "\\S"
+  # libtest prints every per-test result before the first `failures:` line, and
+  # everything after it is the failure report: the captured output of each
+  # failing test, the list of failing names, the trailing `test result:` line.
+  # The split is the only place in the stream where panic text can be told
+  # apart from a test result, so every stage that drops or counts lines has to
+  # sit on the `start` side of it. `keep` does exactly that, which is why the
+  # per-test lines are dropped here rather than by a later `remove_lines`:
+  # a panic message that happens to read `... ok` is then impossible to delete.
   - action: "state_machine"
     states:
       start:
-        keep: "^(test |running |test result)"
+        # `test result:` is cargo's own count, one line per target. It is
+        # correct in every mode, including `-q` and `--color always`, which the
+        # suffix-matching counter this replaces was not.
+        keep: "^test result"
         until: "^failures"
         next: "failures"
+      # Deliberately terminal, with no way back to `start`. Under
+      # `--no-fail-fast` that keeps the per-test lines of the targets that run
+      # after the first failure, which `head` bounds. The alternative, leaving
+      # on the next `running N tests`, would let a test that prints that line
+      # end the region early and take the rest of its own panic message with it.
       failures:
         keep: "."
-        until: "^$"
-        next: "done"
-  - action: "aggregate"
-    patterns:
-      pass: "\\.\\.\\. ok$"
-      fail: "\\.\\.\\. FAILED$"
-      ignored: "\\.\\.\\. ignored$"
+  # A run with hundreds of failing tests would otherwise dump every panic
+  # message. `head` announces the cut with "+N more lines" so nothing is lost
+  # silently, and the raw output stays recoverable through the tee file.
+  #
+  # 150, not 60: the report ends with the `failures:` name list and cargo's own
+  # `test result: FAILED. N passed; M failed` line, so a cap that bites cuts the
+  # count itself. At 60 a 23-failure run lost it, which is the one thing the
+  # unfiltered output got right. 150 covers a couple of dozen failures with
+  # their panic blocks; past that the count goes and the tee file is the answer.
+  - action: "head"
+    n: 150
   - action: "format_template"
     template: "{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "a passing run keeps only cargo's own result line"
+    input: |
+      running 3 tests
+      test tests::adds ... ok
+      test tests::subs ... ok
+      test tests::muls ... ok
+
+      test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    expected: |
+      test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+  - name: "a failing run keeps the whole failure report"
+    input: |
+      running 3 tests
+      test tests::adds ... ok
+      test tests::subs ... FAILED
+      test tests::muls ... ok
+
+      failures:
+
+      ---- tests::subs stdout ----
+
+      thread 'tests::subs' panicked at src/lib.rs:12:9:
+      assertion `left == right` failed
+        left: 3
+       right: 4
+
+      failures:
+          tests::subs
+
+      test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    expected: |
+      ---- tests::subs stdout ----
+      thread 'tests::subs' panicked at src/lib.rs:12:9:
+      assertion `left == right` failed
+        left: 3
+       right: 4
+      failures:
+          tests::subs
+      test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  - name: "a panic message shaped like a test result is never counted, never deleted"
+    input: |
+      running 2 tests
+      test tests::spoof ... FAILED
+      test tests::plain ... ok
+
+      failures:
+
+      ---- tests::spoof stdout ----
+      test spoofed::case ... ok
+      test result: ok. 99 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.99s
+
+      thread 'tests::spoof' panicked at src/lib.rs:9:9:
+      spoofing test still fails
+
+      failures:
+          tests::spoof
+
+      test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    expected: |
+      ---- tests::spoof stdout ----
+      test spoofed::case ... ok
+      test result: ok. 99 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.99s
+      thread 'tests::spoof' panicked at src/lib.rs:9:9:
+      spoofing test still fails
+      failures:
+          tests::spoof
+      test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  - name: "quiet mode keeps cargo's own result line too"
+    input: |
+      running 3 tests
+      ...
+
+      test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    expected: |
+      test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+  - name: "a multi-target run keeps one result line per target"
+    input: |
+      running 2 tests
+      test tests::adds ... ok
+      test tests::muls ... ok
+
+      test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+      running 1 test
+      test ok_integration_one ... ok
+
+      test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    expected: |
+      test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  - name: "the report keeps its tail, so cargo's own count survives"
+    input: |
+      running 1 test
+      test tests::boom ... FAILED
+
+      failures:
+
+      ---- tests::boom stdout ----
+      noise 01
+      noise 02
+      noise 03
+      noise 04
+      noise 05
+      noise 06
+      noise 07
+      noise 08
+      noise 09
+      noise 10
+      noise 11
+      noise 12
+      noise 13
+      noise 14
+      noise 15
+      noise 16
+      noise 17
+      noise 18
+      noise 19
+      noise 20
+      noise 21
+      noise 22
+      noise 23
+      noise 24
+      noise 25
+      noise 26
+      noise 27
+      noise 28
+      noise 29
+      noise 30
+      noise 31
+      noise 32
+      noise 33
+      noise 34
+      noise 35
+      noise 36
+      noise 37
+      noise 38
+      noise 39
+      noise 40
+      noise 41
+      noise 42
+      noise 43
+      noise 44
+      noise 45
+      noise 46
+      noise 47
+      noise 48
+      noise 49
+      noise 50
+      noise 51
+      noise 52
+      noise 53
+      noise 54
+      noise 55
+      noise 56
+      noise 57
+      noise 58
+      noise 59
+      noise 60
+      noise 61
+      noise 62
+
+      failures:
+          tests::boom
+
+      test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    expected: |
+      ---- tests::boom stdout ----
+      noise 01
+      noise 02
+      noise 03
+      noise 04
+      noise 05
+      noise 06
+      noise 07
+      noise 08
+      noise 09
+      noise 10
+      noise 11
+      noise 12
+      noise 13
+      noise 14
+      noise 15
+      noise 16
+      noise 17
+      noise 18
+      noise 19
+      noise 20
+      noise 21
+      noise 22
+      noise 23
+      noise 24
+      noise 25
+      noise 26
+      noise 27
+      noise 28
+      noise 29
+      noise 30
+      noise 31
+      noise 32
+      noise 33
+      noise 34
+      noise 35
+      noise 36
+      noise 37
+      noise 38
+      noise 39
+      noise 40
+      noise 41
+      noise 42
+      noise 43
+      noise 44
+      noise 45
+      noise 46
+      noise 47
+      noise 48
+      noise 49
+      noise 50
+      noise 51
+      noise 52
+      noise 53
+      noise 54
+      noise 55
+      noise 56
+      noise 57
+      noise 58
+      noise 59
+      noise 60
+      noise 61
+      noise 62
+      failures:
+          tests::boom
+      test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
