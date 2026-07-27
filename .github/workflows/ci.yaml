@@ -25,6 +25,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The inline `tests:` blocks in filters/*.yaml were enforced by nothing:
+      # `go test` does not read them, so a contributor could break a filter's
+      # own fixtures and CI stayed green. snip verify runs them against the
+      # embedded filter set, which is why the binary is built first.
+      - name: Verify filters
+        run: |
+          go build -o /tmp/snip ./cmd/snip
+          /tmp/snip verify
+
   lint:
     runs-on: ubuntu-latest
     steps:
