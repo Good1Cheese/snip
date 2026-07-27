@@ -1258,7 +1258,10 @@ func TestLoadMergedMinimalProjectConfig(t *testing.T) {
 func TestClaudeBaseDirRespectsEnvVar(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/config")
 
-	got := ClaudeBaseDir()
+	got, err := ClaudeBaseDir()
+	if err != nil {
+		t.Fatalf("ClaudeBaseDir() error: %v", err)
+	}
 	if got != "/custom/claude/config" {
 		t.Errorf("ClaudeBaseDir() = %q, want %q", got, "/custom/claude/config")
 	}
@@ -1272,7 +1275,10 @@ func TestClaudeBaseDirFallsBackToHomeClaude(t *testing.T) {
 		t.Skip("cannot get home dir")
 	}
 
-	got := ClaudeBaseDir()
+	got, err := ClaudeBaseDir()
+	if err != nil {
+		t.Fatalf("ClaudeBaseDir() error: %v", err)
+	}
 	want := filepath.Join(home, ".claude")
 	if got != want {
 		t.Errorf("ClaudeBaseDir() = %q, want %q", got, want)
@@ -1289,5 +1295,30 @@ func TestClaudeBaseDirDoesNotAffectSnipConfig(t *testing.T) {
 
 	if got := configPath(); got != snipConfigPath {
 		t.Errorf("configPath() = %q, want %q (should ignore CLAUDE_CONFIG_DIR)", got, snipConfigPath)
+	}
+}
+
+func TestClaudeProjectsDirRespectsEnvVar(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir")
+
+	got := ClaudeProjectsDir()
+	want := filepath.Join("/custom/claude/dir", "projects")
+	if got != want {
+		t.Errorf("ClaudeProjectsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeProjectsDirFallsBackToHome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home dir")
+	}
+
+	got := ClaudeProjectsDir()
+	want := filepath.Join(home, ".claude", "projects")
+	if got != want {
+		t.Errorf("ClaudeProjectsDir() = %q, want %q", got, want)
 	}
 }

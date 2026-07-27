@@ -190,9 +190,9 @@ func resolveSnipBin() (string, error) {
 
 // initClaudeCode installs the snip hook for Claude Code.
 func initClaudeCode(snipBin, filterDir string) error {
-	claudeBase := config.ClaudeBaseDir()
-	if claudeBase == "" {
-		return fmt.Errorf("get home dir: resolve CLAUDE_CONFIG_DIR or $HOME")
+	claudeBase, err := config.ClaudeBaseDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
 	}
 
 	// Migrate: remove old bash hook script if present
@@ -307,9 +307,9 @@ func Uninstall(agent string) error {
 
 // uninstallClaudeCode removes snip integration from Claude Code.
 func uninstallClaudeCode() error {
-	claudeBase := config.ClaudeBaseDir()
-	if claudeBase == "" {
-		return fmt.Errorf("get home dir: resolve CLAUDE_CONFIG_DIR or $HOME")
+	claudeBase, err := config.ClaudeBaseDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
 	}
 
 	// Remove legacy bash script if present

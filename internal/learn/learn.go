@@ -72,22 +72,22 @@ type bashInput struct {
 
 // commandEntry represents a Bash command extracted from a session with its result.
 type commandEntry struct {
-	Command    string // full command string
-	BaseCmd    string // extracted base command name
-	ToolUseID  string // tool_use id for matching results
-	Output     string // tool result content (if found)
-	IsError    bool   // whether the tool result indicated an error
-	HasResult  bool   // whether a result was matched
-	Timestamp  string // timestamp from the JSONL entry
+	Command   string // full command string
+	BaseCmd   string // extracted base command name
+	ToolUseID string // tool_use id for matching results
+	Output    string // tool result content (if found)
+	IsError   bool   // whether the tool result indicated an error
+	HasResult bool   // whether a result was matched
+	Timestamp string // timestamp from the JSONL entry
 }
 
 // ErrorPattern represents a detected error-correction pattern.
 type ErrorPattern struct {
-	BaseCommand    string // base command name (e.g. "go", "git")
-	ErrorCommand   string // the command that failed
-	ErrorOutput    string // truncated error output
-	FixCommand     string // the command that succeeded
-	Count          int    // number of times this pattern occurred
+	BaseCommand  string // base command name (e.g. "go", "git")
+	ErrorCommand string // the command that failed
+	ErrorOutput  string // truncated error output
+	FixCommand   string // the command that succeeded
+	Count        int    // number of times this pattern occurred
 }
 
 // PatternGroup aggregates similar error patterns by base command.
@@ -197,16 +197,6 @@ func parseArgs(args []string) Options {
 	return opts
 }
 
-// claudeProjectsDir returns the base Claude Code projects directory,
-// honoring CLAUDE_CONFIG_DIR.
-func claudeProjectsDir() string {
-	base := config.ClaudeBaseDir()
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, "projects")
-}
-
 // cwdToProjectName converts a working directory path to the Claude Code
 // project directory name format.
 func cwdToProjectName(cwd string) string {
@@ -215,7 +205,7 @@ func cwdToProjectName(cwd string) string {
 
 // findProjectDirs returns the list of Claude Code project directories to scan.
 func findProjectDirs(opts Options) ([]string, error) {
-	base := claudeProjectsDir()
+	base := config.ClaudeProjectsDir()
 	if base == "" {
 		return nil, nil
 	}

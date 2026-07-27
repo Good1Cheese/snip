@@ -21,8 +21,8 @@ import (
 type sessionLine struct {
 	Type    string `json:"type"`
 	Message *struct {
-		Role    string            `json:"role"`
-		Content json.RawMessage   `json:"content"`
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
 	} `json:"message,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
 }
@@ -125,16 +125,6 @@ func parseArgs(args []string) Options {
 	return opts
 }
 
-// claudeProjectsDir returns the base Claude Code projects directory,
-// honoring CLAUDE_CONFIG_DIR.
-func claudeProjectsDir() string {
-	base := config.ClaudeBaseDir()
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, "projects")
-}
-
 // cwdToProjectName converts a working directory path to the Claude Code
 // project directory name format: slashes become dashes, leading slash stripped.
 func cwdToProjectName(cwd string) string {
@@ -145,7 +135,7 @@ func cwdToProjectName(cwd string) string {
 
 // findProjectDirs returns the list of Claude Code project directories to scan.
 func findProjectDirs(opts Options) ([]string, error) {
-	base := claudeProjectsDir()
+	base := config.ClaudeProjectsDir()
 	if base == "" {
 		return nil, nil
 	}
