@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edouard-claude/snip/internal/config"
 	"github.com/edouard-claude/snip/internal/hook"
 )
 
@@ -196,13 +197,14 @@ func parseArgs(args []string) Options {
 	return opts
 }
 
-// claudeProjectsDir returns the base Claude Code projects directory.
+// claudeProjectsDir returns the base Claude Code projects directory,
+// honoring CLAUDE_CONFIG_DIR.
 func claudeProjectsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	base := config.ClaudeBaseDir()
+	if base == "" {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "projects")
+	return filepath.Join(base, "projects")
 }
 
 // cwdToProjectName converts a working directory path to the Claude Code

@@ -419,3 +419,28 @@ func writeLines(t *testing.T, path string, lines []string) {
 		t.Fatal(err)
 	}
 }
+
+func TestClaudeProjectsDirRespectsEnvVar(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir")
+
+	got := claudeProjectsDir()
+	want := filepath.Join("/custom/claude/dir", "projects")
+	if got != want {
+		t.Errorf("claudeProjectsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeProjectsDirFallsBackToHome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home dir")
+	}
+
+	got := claudeProjectsDir()
+	want := filepath.Join(home, ".claude", "projects")
+	if got != want {
+		t.Errorf("claudeProjectsDir() = %q, want %q", got, want)
+	}
+}

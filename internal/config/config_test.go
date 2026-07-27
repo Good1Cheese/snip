@@ -1254,3 +1254,40 @@ func TestLoadMergedMinimalProjectConfig(t *testing.T) {
 		t.Error("user git-diff should be preserved with minimal project config")
 	}
 }
+
+func TestClaudeBaseDirRespectsEnvVar(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/config")
+
+	got := ClaudeBaseDir()
+	if got != "/custom/claude/config" {
+		t.Errorf("ClaudeBaseDir() = %q, want %q", got, "/custom/claude/config")
+	}
+}
+
+func TestClaudeBaseDirFallsBackToHomeClaude(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home dir")
+	}
+
+	got := ClaudeBaseDir()
+	want := filepath.Join(home, ".claude")
+	if got != want {
+		t.Errorf("ClaudeBaseDir() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeBaseDirDoesNotAffectSnipConfig(t *testing.T) {
+	// CLAUDE_CONFIG_DIR must never override SNIP_CONFIG or snip's own
+	// config path resolution — it only affects .claude paths.
+	dir := t.TempDir()
+	snipConfigPath := filepath.Join(dir, "snip-config.toml")
+	t.Setenv("SNIP_CONFIG", snipConfigPath)
+	t.Setenv("CLAUDE_CONFIG_DIR", "/some/other/claude/dir")
+
+	if got := configPath(); got != snipConfigPath {
+		t.Errorf("configPath() = %q, want %q (should ignore CLAUDE_CONFIG_DIR)", got, snipConfigPath)
+	}
+}

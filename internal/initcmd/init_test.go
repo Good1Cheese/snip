@@ -621,6 +621,66 @@ func TestRunUnknownAgent(t *testing.T) {
 	}
 }
 
+func TestInitClaudeCodeRespectsClaudeConfigDir(t *testing.T) {
+	claudeDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	filterDir := t.TempDir()
+	err := initClaudeCode("/usr/local/bin/snip", filterDir)
+	if err != nil {
+		t.Fatalf("initClaudeCode: %v", err)
+	}
+
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Errorf("expected settings.json at %s honoring CLAUDE_CONFIG_DIR: %v", settingsPath, err)
+	}
+}
+
+func TestInitClaudeCodeMigratesLegacyHookUnderClaudeConfigDir(t *testing.T) {
+	claudeDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	hooksDir := filepath.Join(claudeDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldHookPath := filepath.Join(hooksDir, legacyHookFile)
+	if err := os.WriteFile(oldHookPath, []byte("#!/bin/bash\nexit 0"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	filterDir := t.TempDir()
+	if err := initClaudeCode("/usr/local/bin/snip", filterDir); err != nil {
+		t.Fatalf("initClaudeCode: %v", err)
+	}
+
+	if _, err := os.Stat(oldHookPath); !os.IsNotExist(err) {
+		t.Error("legacy hook script under CLAUDE_CONFIG_DIR should be removed")
+	}
+}
+
+func TestUninstallClaudeCodeRespectsClaudeConfigDir(t *testing.T) {
+	claudeDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := patchClaudeSettings(settingsPath, "/usr/local/bin/snip hook"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := uninstallClaudeCode(); err != nil {
+		t.Fatalf("uninstallClaudeCode: %v", err)
+	}
+
+	settings := readSettings(t, settingsPath)
+	if hooks, ok := settings["hooks"].(map[string]any); ok {
+		if _, ok := hooks["PreToolUse"]; ok {
+			t.Error("expected snip hook removed from CLAUDE_CONFIG_DIR settings")
+		}
+	}
+}
+
 func readSettings(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)

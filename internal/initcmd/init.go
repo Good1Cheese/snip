@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/edouard-claude/snip/internal/config"
 )
 
 const (
@@ -136,7 +138,7 @@ func Run(args []string) error {
 
 	switch agent {
 	case "claude-code":
-		return initClaudeCode(snipBin, home, filterDir)
+		return initClaudeCode(snipBin, filterDir)
 	case "cursor":
 		return initCursor(snipBin, home, filterDir)
 	case "codex":
@@ -187,16 +189,21 @@ func resolveSnipBin() (string, error) {
 }
 
 // initClaudeCode installs the snip hook for Claude Code.
-func initClaudeCode(snipBin, home, filterDir string) error {
+func initClaudeCode(snipBin, filterDir string) error {
+	claudeBase := config.ClaudeBaseDir()
+	if claudeBase == "" {
+		return fmt.Errorf("get home dir: resolve CLAUDE_CONFIG_DIR or $HOME")
+	}
+
 	// Migrate: remove old bash hook script if present
-	oldHookPath := filepath.Join(home, ".claude", "hooks", legacyHookFile)
+	oldHookPath := filepath.Join(claudeBase, "hooks", legacyHookFile)
 	if _, err := os.Stat(oldHookPath); err == nil {
 		_ = os.Remove(oldHookPath)
 		fmt.Printf("  migrated: removed old %s\n", legacyHookFile)
 	}
 
 	hookCommand := snipBin + " hook"
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settingsPath := filepath.Join(claudeBase, "settings.json")
 	if err := patchClaudeSettings(settingsPath, hookCommand); err != nil {
 		return fmt.Errorf("patch settings: %w", err)
 	}
@@ -300,16 +307,16 @@ func Uninstall(agent string) error {
 
 // uninstallClaudeCode removes snip integration from Claude Code.
 func uninstallClaudeCode() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
+	claudeBase := config.ClaudeBaseDir()
+	if claudeBase == "" {
+		return fmt.Errorf("get home dir: resolve CLAUDE_CONFIG_DIR or $HOME")
 	}
 
 	// Remove legacy bash script if present
-	oldHookPath := filepath.Join(home, ".claude", "hooks", legacyHookFile)
+	oldHookPath := filepath.Join(claudeBase, "hooks", legacyHookFile)
 	_ = os.Remove(oldHookPath)
 
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settingsPath := filepath.Join(claudeBase, "settings.json")
 	if err := unpatchClaudeSettings(settingsPath); err != nil {
 		return fmt.Errorf("unpatch settings: %w", err)
 	}
