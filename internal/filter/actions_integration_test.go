@@ -370,8 +370,20 @@ func TestRailsMigrateFilterIntegration(t *testing.T) {
 	}
 
 	// Should contain migrations executed summary
-	if !strings.Contains(filtered, "migrations executed") {
-		t.Error("filtered output missing 'migrations executed'")
+	if !strings.Contains(filtered, "3 migrations executed") {
+		t.Errorf("filtered output missing the migration count header: %q", filtered)
+	}
+
+	// The migration names must survive the aggregate stage (issue #136)
+	for _, name := range []string{"CreateUsers", "AddIndexToOrders", "CreateProducts"} {
+		if !strings.Contains(filtered, "- "+name) {
+			t.Errorf("filtered output missing migration %q: %q", name, filtered)
+		}
+	}
+
+	// The summary line aggregate appends must not leak into the payload
+	if strings.Contains(filtered, "migrated: 3") {
+		t.Errorf("aggregate summary line leaked into the payload: %q", filtered)
 	}
 
 	// Calculate and log token savings
