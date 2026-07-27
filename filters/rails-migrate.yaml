@@ -1,5 +1,5 @@
 name: "rails-migrate"
-version: 1
+version: 2
 description: "Condensed rails db:migrate output"
 
 match:
@@ -16,10 +16,58 @@ pipeline:
   - action: "regex_extract"
     pattern: "== \\d+ (\\w+): migrated"
     format: "- $1"
+  # append keeps the extracted migration names: without it, aggregate replaces
+  # the very lines it counted and the template renders the count twice
   - action: "aggregate"
     patterns:
       migrated: "^-"
+    append: true
+  # the count is carried by .stats, so drop the summary line aggregate appended
+  # (extracted names are "- Name", so this pattern cannot match a payload line)
+  - action: "remove_lines"
+    pattern: "^migrated: \\d+$"
   - action: "format_template"
-    template: "{{with .stats}}{{.migrated}} migrations executed:{{end}}\n{{.lines}}"
+    template: "{{with .stats}}{{if .migrated}}{{.migrated}} migration{{if ne .migrated 1}}s{{end}} executed:{{else}}no migrations executed{{end}}{{end}}\n{{.lines}}"
 
 on_error: "passthrough"
+
+tests:
+  - name: "migration names survive the count summary"
+    input: |
+      == 20240101000000 CreateUsers: migrating ======================================
+      -- create_table(:users)
+         -> 0.0100s
+      -- add_index(:users, :email, {:unique=>true})
+         -> 0.0023s
+      == 20240101000000 CreateUsers: migrated (0.0123s) =============================
+
+      == 20240202120000 CreatePosts: migrating ======================================
+      -- create_table(:posts)
+         -> 0.0081s
+      -- add_foreign_key(:posts, :users)
+         -> 0.0044s
+      == 20240202120000 CreatePosts: migrated (0.0125s) =============================
+    expected: |
+      2 migrations executed:
+      - CreateUsers
+      - CreatePosts
+  - name: "a single migration is announced in the singular"
+    input: |
+      == 20240101000000 CreateUsers: migrating ======================================
+      -- create_table(:users)
+         -> 0.0100s
+      == 20240101000000 CreateUsers: migrated (0.0123s) =============================
+    expected: |
+      1 migration executed:
+      - CreateUsers
+  - name: "a migration that only started is not reported as executed"
+    input: |
+      == 20240101000000 CreateUsers: migrating ======================================
+      -- create_table(:users)
+         -> 0.0100s
+    expected: |
+      no migrations executed
+  - name: "nothing pending produces no phantom count"
+    input: ""
+    expected: |
+      no migrations executed
