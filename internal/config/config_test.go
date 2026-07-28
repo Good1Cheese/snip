@@ -1268,6 +1268,7 @@ func TestClaudeBaseDirRespectsEnvVar(t *testing.T) {
 }
 
 func TestClaudeBaseDirFallsBackToHomeClaude(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 
 	home, err := os.UserHomeDir()
@@ -1286,8 +1287,9 @@ func TestClaudeBaseDirFallsBackToHomeClaude(t *testing.T) {
 }
 
 func TestClaudeBaseDirDoesNotAffectSnipConfig(t *testing.T) {
-	// CLAUDE_CONFIG_DIR must never override SNIP_CONFIG or snip's own
-	// config path resolution — it only affects .claude paths.
+	// Guard, not a regression test: configPath() never read CLAUDE_CONFIG_DIR
+	// before this PR either. CLAUDE_CONFIG_DIR must never override SNIP_CONFIG
+	// or snip's own config path resolution — it only affects .claude paths.
 	dir := t.TempDir()
 	snipConfigPath := filepath.Join(dir, "snip-config.toml")
 	t.Setenv("SNIP_CONFIG", snipConfigPath)
@@ -1309,6 +1311,7 @@ func TestClaudeProjectsDirRespectsEnvVar(t *testing.T) {
 }
 
 func TestClaudeProjectsDirFallsBackToHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 
 	home, err := os.UserHomeDir()

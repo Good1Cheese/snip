@@ -622,6 +622,7 @@ func TestRunUnknownAgent(t *testing.T) {
 }
 
 func TestInitClaudeCodeRespectsClaudeConfigDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	claudeDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
 
@@ -638,6 +639,7 @@ func TestInitClaudeCodeRespectsClaudeConfigDir(t *testing.T) {
 }
 
 func TestInitClaudeCodeMigratesLegacyHookUnderClaudeConfigDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	claudeDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
 
@@ -661,6 +663,7 @@ func TestInitClaudeCodeMigratesLegacyHookUnderClaudeConfigDir(t *testing.T) {
 }
 
 func TestUninstallClaudeCodeRespectsClaudeConfigDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	claudeDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
 
