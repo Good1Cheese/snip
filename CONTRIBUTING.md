@@ -26,7 +26,7 @@ See the [Filter DSL documentation](https://github.com/edouard-claude/snip/wiki) 
 
 1. Fork and create a feature branch
 2. Write tests first (TDD)
-3. Run `make test && make lint`
+3. Run `make ci`
 4. Commit with [conventional prefixes](https://www.conventionalcommits.org/): `fix:`, `feat:`, `docs:`, `ci:`, `test:`
 5. Open a PR against `master`
 
