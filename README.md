@@ -135,6 +135,11 @@ git clone https://github.com/edouard-claude/snip.git
 cd snip && make install
 ```
 
+On Linux, `make install` and `make install-lite` use the first available destination:
+an explicit `GOBIN`, `go env GOBIN`, or the first `go env GOPATH` entry plus
+`/bin`. Use `make upgrade` or `make upgrade-lite` to replace the resolved
+`snip` on `PATH` instead. An explicit `GOBIN` overrides the upgrade destination.
+
 Requires Go 1.25+.
 
 ## Supported AI Tools
@@ -548,7 +553,8 @@ make build        # static binary (CGO_ENABLED=0)
 make test         # all tests with coverage
 make test-race    # race detector
 make lint         # go vet + golangci-lint
-make install      # install to $GOPATH/bin
+make install      # install using GOBIN or the Go environment
+make upgrade      # replace the active snip binary (GOBIN overrides)
 ```
 
 ## Documentation

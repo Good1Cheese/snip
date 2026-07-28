@@ -1,0 +1,75 @@
+#!/bin/sh
+
+set -eu
+
+upgrade=false
+case "$#" in
+	0) ;;
+	1)
+		if [ "$1" != "--upgrade" ]; then
+			printf 'usage: install-path [--upgrade]\n' >&2
+			exit 2
+		fi
+		upgrade=true
+		;;
+	*)
+		printf 'usage: install-path [--upgrade]\n' >&2
+		exit 2
+		;;
+esac
+
+if [ -n "${GOBIN:-}" ]; then
+	printf '%s/snip\n' "${GOBIN%/}"
+	exit 0
+fi
+
+snip_path=
+if [ "$upgrade" = true ]; then
+	snip_path=$(command -v snip 2>/dev/null || true)
+fi
+if [ -n "$snip_path" ]; then
+	link_count=0
+	while [ -L "$snip_path" ]; do
+		if [ "$link_count" -ge 40 ]; then
+			printf 'snip: cannot resolve existing snip symlink: too many links\n' >&2
+			exit 1
+		fi
+		link_target=$(readlink "$snip_path") || {
+			printf 'snip: cannot resolve existing snip symlink; set GOBIN explicitly\n' >&2
+			exit 1
+		}
+		case "$link_target" in
+			/*) snip_path=$link_target ;;
+			*) snip_path=$(dirname "$snip_path")/$link_target ;;
+		esac
+		link_count=$((link_count + 1))
+	done
+	snip_dir=$(CDPATH='' cd -- "$(dirname "$snip_path")" && pwd -P) || {
+		printf 'snip: cannot resolve existing snip path; set GOBIN explicitly\n' >&2
+		exit 1
+	}
+	printf '%s/%s\n' "$snip_dir" "$(basename "$snip_path")"
+	exit 0
+fi
+
+go_bin=$(go env GOBIN) || {
+	printf 'snip: cannot read GOBIN from Go; set GOBIN or configure the Go environment\n' >&2
+	exit 1
+}
+if [ -n "$go_bin" ]; then
+	printf '%s/snip\n' "${go_bin%/}"
+	exit 0
+fi
+
+go_path=$(go env GOPATH) || {
+	printf 'snip: cannot read GOPATH from Go; set GOBIN or configure the Go environment\n' >&2
+	exit 1
+}
+first_go_path=${go_path%%:*}
+if [ -n "$first_go_path" ]; then
+	printf '%s/bin/snip\n' "${first_go_path%/}"
+	exit 0
+fi
+
+printf 'snip: no install destination; set GOBIN or configure the Go environment\n' >&2
+exit 1

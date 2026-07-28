@@ -62,8 +62,10 @@ make build-lite          # Build without SQLite tracking (-tags lite, ~5MB small
 make test                # Run all tests with coverage
 make test-race           # Run tests with race detector
 make lint                # go vet + golangci-lint
-make install             # Install to $GOPATH/bin
+make install             # Install using GOBIN or the Go environment
 make install-lite        # Install lite variant
+make upgrade             # Replace active snip (GOBIN overrides)
+make upgrade-lite        # Replace active snip with lite variant
 go test -run TestName ./internal/filter/...   # Single test
 goreleaser release --snapshot --clean          # Test release build locally
 ```
