@@ -21,8 +21,8 @@ import (
 type sessionLine struct {
 	Type    string `json:"type"`
 	Message *struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role    string            `json:"role"`
+		Content json.RawMessage   `json:"content"`
 	} `json:"message,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
 }
