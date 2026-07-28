@@ -355,7 +355,8 @@ func ClaudeBaseDir() (string, error) {
 }
 
 // ClaudeProjectsDir returns the base Claude Code projects directory,
-// honoring CLAUDE_CONFIG_DIR. Returns "" if the base directory cannot be resolved.
+// honoring CLAUDE_CONFIG_DIR. Returns "" when the home directory cannot be
+// resolved; callers treat that as "no sessions found".
 func ClaudeProjectsDir() string {
 	base, err := ClaudeBaseDir()
 	if err != nil {
