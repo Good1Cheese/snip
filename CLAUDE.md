@@ -68,6 +68,13 @@ go test -run TestName ./internal/filter/...   # Single test
 goreleaser release --snapshot --clean          # Test release build locally
 ```
 
+### Working in this repo
+
+- snip is usually installed as a hook here, so it filters `go` and `git` output while you work.
+  For raw output: `/usr/bin/git ...`, or `printf '#!/bin/sh\nexec go "$@"\n' > /tmp/rawgo && chmod +x /tmp/rawgo`
+- `snip verify` runs the **embedded** filter set: rebuild the binary after editing anything in `filters/`
+- Filter inline `tests:` blocks are CI-enforced by the `Verify filters` step in `.github/workflows/ci.yaml`
+
 ## Design Constraints
 
 - **Startup < 10ms** — snip intercepts every shell command; latency is critical
@@ -95,6 +102,18 @@ Filters are declarative YAML files with 20 built-in actions:
 `group_by`, `dedup`, `json_extract`, `json_schema`, `ndjson_stream`,
 `regex_extract`, `state_machine`, `aggregate`, `format_template`, `compact_path`,
 `replace`, `match_output`, `on_empty`
+
+Gotchas that have caused real bugs:
+
+- `aggregate` **replaces** the lines it counted unless `append: true` (caused #134, #136 in three filters)
+- `{{.count}}` is the number of lines reaching the template, not entities: wrong after any stage emitting a
+  summary, an overflow marker or a cap (caused #125). Prefer the tool's own count over recomputing one
+- Any stage that drops or counts lines must sit where payload and metadata are still distinguishable —
+  a `remove_lines` after a state machine will happily delete panic text
+- `exclude_flags` and `skip_if_present` match with `strings.HasPrefix`; `skip_if_present` is all-or-nothing,
+  one match disables the whole injection
+- `inject.args` may reformat the answer, never suppress part of it. A flag that hides content (`--stat`,
+  `--no-merges`) needs an escape in `exclude_flags` and must be named in the output (#124)
 
 ## Release Workflow
 
@@ -129,3 +148,7 @@ git tag -a v0.1.1 -m "fix: description" && git push origin v0.1.1
 - Use context wrapping on errors: `fmt.Errorf("operation: %w", err)`
 - When adding a new built-in subcommand: add it to both the `switch` in `cli.go` AND `isBuiltInCommand` in `flags.go` (the authoritative list of builtins)
 - When changing user-facing behavior, filters, or architecture: update the GitHub wiki (`git clone https://github.com/edouard-claude/snip.wiki.git`) to stay in sync
+- Reviewing a fix: revert the production hunk, re-run the new test, confirm it fails. Two of six PRs this
+  month shipped tests that passed either way
+- Before calling a defect a regression, reproduce it on `master` too — several reported this month were
+  pre-existing, which changes the verdict from "blocker" to "out of scope"
