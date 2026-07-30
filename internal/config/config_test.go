@@ -1254,3 +1254,74 @@ func TestLoadMergedMinimalProjectConfig(t *testing.T) {
 		t.Error("user git-diff should be preserved with minimal project config")
 	}
 }
+
+func TestClaudeBaseDirRespectsEnvVar(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/config")
+
+	got, err := ClaudeBaseDir()
+	if err != nil {
+		t.Fatalf("ClaudeBaseDir() error: %v", err)
+	}
+	if got != "/custom/claude/config" {
+		t.Errorf("ClaudeBaseDir() = %q, want %q", got, "/custom/claude/config")
+	}
+}
+
+func TestClaudeBaseDirFallsBackToHomeClaude(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home dir")
+	}
+
+	got, err := ClaudeBaseDir()
+	if err != nil {
+		t.Fatalf("ClaudeBaseDir() error: %v", err)
+	}
+	want := filepath.Join(home, ".claude")
+	if got != want {
+		t.Errorf("ClaudeBaseDir() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeBaseDirDoesNotAffectSnipConfig(t *testing.T) {
+	// Guard, not a regression test: configPath() never read CLAUDE_CONFIG_DIR
+	// before this PR either. CLAUDE_CONFIG_DIR must never override SNIP_CONFIG
+	// or snip's own config path resolution — it only affects .claude paths.
+	dir := t.TempDir()
+	snipConfigPath := filepath.Join(dir, "snip-config.toml")
+	t.Setenv("SNIP_CONFIG", snipConfigPath)
+	t.Setenv("CLAUDE_CONFIG_DIR", "/some/other/claude/dir")
+
+	if got := configPath(); got != snipConfigPath {
+		t.Errorf("configPath() = %q, want %q (should ignore CLAUDE_CONFIG_DIR)", got, snipConfigPath)
+	}
+}
+
+func TestClaudeProjectsDirRespectsEnvVar(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir")
+
+	got := ClaudeProjectsDir()
+	want := filepath.Join("/custom/claude/dir", "projects")
+	if got != want {
+		t.Errorf("ClaudeProjectsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeProjectsDirFallsBackToHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home dir")
+	}
+
+	got := ClaudeProjectsDir()
+	want := filepath.Join(home, ".claude", "projects")
+	if got != want {
+		t.Errorf("ClaudeProjectsDir() = %q, want %q", got, want)
+	}
+}
