@@ -189,6 +189,13 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 			flush(cmd[groupStart:i])
 			b.WriteByte(ch)
 			i++
+			// ";;" ends a case arm, as do its ";&" and ";;&" variants. What
+			// follows is the next arm's pattern rather than a command, and
+			// blockScope cannot see it: ';' is a group boundary, so advance is
+			// never handed one (issue #138).
+			if i < len(cmd) && (cmd[i] == ';' || cmd[i] == '&') {
+				scope.caseArmEnd()
+			}
 			groupStart = i
 		case '&':
 			flush(cmd[groupStart:i])

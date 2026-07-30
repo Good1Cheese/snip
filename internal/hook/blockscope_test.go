@@ -780,3 +780,97 @@ func TestRewriteNoFalsePositives(t *testing.T) {
 		})
 	}
 }
+
+// TestRewriteCommandPosition pins issue #138: four shapes fooled the
+// command-position approximation, so a reserved word that is not a command
+// closed a block that was still open and the body was rewritten. Each case here
+// corrupts identically on master, where a `grep` capped at 50 lines answered a
+// consumer that must see all 60.
+func TestRewriteCommandPosition(t *testing.T) {
+	const bin = "/usr/local/bin/snip"
+	const w = `"/usr/local/bin/snip" run -- `
+	cmdSet := map[string]struct{}{"git": {}, "go": {}, "grep": {}, "wc": {}}
+
+	cases := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{
+			// A case-arm pattern is a pattern, never a command: `done)` must not
+			// pop the case it is an arm of.
+			name: "case arm pattern is a reserved word",
+			cmd:  "case $s in\n  done)\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+			want: "case $s in\n  done)\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+		},
+		{
+			// The arm pattern is re-armed after ';;', so a later arm is protected
+			// too, not just the first one.
+			name: "reserved word in a later case arm",
+			cmd:  "case $s in\n  a)\n    echo x\n    ;;\n  done)\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+			want: "case $s in\n  a)\n    echo x\n    ;;\n  done)\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+		},
+		{
+			// Inside parentheses '|' is pattern alternation, not a pipeline, so it
+			// does not restore command position.
+			name: "extglob alternative names a reserved word",
+			cmd:  "for f in @(data|done).txt\ndo\n  grep MATCH $f\ndone | wc -l",
+			want: "for f in @(data|done).txt\ndo\n  grep MATCH $f\ndone | wc -l",
+		},
+		{
+			// `time` keeps command position for the command it times; its own
+			// options must not lose the opener that follows them.
+			name: "time with its -p option",
+			cmd:  "time -p for i in 1\ndo\n  grep MATCH data.txt\ndone | wc -l",
+			want: "time -p for i in 1\ndo\n  grep MATCH data.txt\ndone | wc -l",
+		},
+		{
+			// Bash starts a word right after the ')' operator, so this is a
+			// comment and the `done` inside it closes nothing.
+			name: "comment flush against a case arm paren",
+			cmd:  "case $s in\n  a)# done marker\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+			want: "case $s in\n  a)# done marker\n    grep MATCH data.txt\n    ;;\nesac | wc -l",
+		},
+		{
+			name: "comment flush against a subshell paren",
+			cmd:  "(grep MATCH data.txt)# done\ngrep x y",
+			want: "(grep MATCH data.txt)# done\n" + w + "grep x y",
+		},
+		{
+			// Not a comment: this ')' closes a command substitution, so '#' is
+			// still inside the word. The block must keep closing normally.
+			name: "hash after a command substitution",
+			cmd:  "for f in $(ls)#tail\ndo\n  grep x $f\ndone\ngrep y z",
+			want: "for f in $(ls)#tail\ndo\n  grep x $f\ndone\n" + w + "grep y z",
+		},
+		{
+			// ${#f} is a length expansion, not a comment: the `done` after it must
+			// still close the loop, otherwise the next command loses filtering.
+			name: "length expansion inside a body",
+			cmd:  "for f in *.go\ndo\n  grep ${#f} $f\ndone\ngrep x y",
+			want: "for f in *.go\ndo\n  grep ${#f} $f\ndone\n" + w + "grep x y",
+		},
+		{
+			// `time` is not a known base command, so the group is left alone;
+			// what matters is that nothing here opens or closes a block.
+			name: "bare time before a plain command",
+			cmd:  "time grep MATCH data.txt\ngrep x y",
+			want: "time grep MATCH data.txt\n" + w + "grep x y",
+		},
+		{
+			// A pipeline after a case closes it: filtering resumes afterwards.
+			name: "filtering resumes after a case",
+			cmd:  "case $s in\n  done)\n    grep MATCH data.txt\n    ;;\nesac\ngrep x y",
+			want: "case $s in\n  done)\n    grep MATCH data.txt\n    ;;\nesac\n" + w + "grep x y",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := RewriteCommand(tc.cmd, cmdSet, nil, bin)
+			if res.Command != tc.want {
+				t.Errorf("Command = %q, want %q", res.Command, tc.want)
+			}
+		})
+	}
+}

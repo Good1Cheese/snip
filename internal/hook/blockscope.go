@@ -49,17 +49,13 @@ const (
 //     group, and never on a case-arm pattern ("  a )"). Reserved words count
 //     only in command position and comments are skipped whole, so neither
 //     `echo done` nor `# done` closes anything.
-//   - Command position is approximated, not decided the way the shell does, and
-//     four shapes are known to fool it. A case-arm pattern that is itself a
-//     reserved word (`case $s in done)`) is read as a command and closes the
-//     case. An extglob alternative does the same, because '|' is treated as a
-//     pipeline separator everywhere (`for f in @(data|done).txt`). `time -p`
-//     loses the opener that follows it, since only bare `time` is whitelisted.
-//     And a '#' written flush against a ')' is not seen as a comment, because
-//     isWordStart does not count ')' as a word boundary (`a)# done marker`).
-//     All four are pre-existing: they corrupt identically on master, which has
-//     no block tracking at all, so this file narrows the defect rather than
-//     introducing it. Tracked separately.
+//   - Command position is approximated, not decided the way the shell does. The
+//     four shapes of issue #138 used to fool it and are now handled: a case-arm
+//     pattern spelled like a reserved word (`case $s in done)`), an extglob
+//     alternative (`for f in @(data|done).txt`), `time` with its own options
+//     (`time -p for i in 1`), and a '#' flush against an operator ')'
+//     (`a)# done marker`). The approximation remains one: a shape nobody has
+//     hit yet can still read a pattern or an argument as a command.
 //   - A missed opener costs correctness, not just savings: the body is rewritten
 //     and a consumer of the block reads snip's compacted output. Every opener
 //     above is therefore matched on the shell's own rule (command position),
@@ -84,6 +80,19 @@ type blockScope struct {
 	// funcName is set between the `function` reserved word and the name that
 	// follows it, so the '{' after the name is still seen in command position.
 	funcName bool
+	// casePattern is set while the words being read are a case-arm pattern
+	// rather than a command: from the `in` of `case $s in` to that arm's ')',
+	// and again from each ';;' to the next ')'. A pattern spelled like a
+	// reserved word ("done)") must not be classified as one.
+	casePattern bool
+	// caseHeader is set between `case` and the `in` that ends its subject, so
+	// only that `in` arms casePattern. An `in` in an arm body ("echo in") is an
+	// ordinary word and must not turn the rest of the body into a pattern.
+	caseHeader bool
+	// afterTime is set just past `time` and its own option words, which keep
+	// command position so the timed command — possibly a block opener — is
+	// still seen ("time -p for i in 1").
+	afterTime bool
 }
 
 // inBlock reports whether the group being flushed sits inside a compound
@@ -122,7 +131,23 @@ func (s *blockScope) closeKeyword() {
 	for len(s.stack) > 0 && s.stack[len(s.stack)-1] == blockParen {
 		s.stack = s.stack[:len(s.stack)-1]
 	}
+	if k, ok := s.top(); ok && k == blockCase {
+		// `esac`: whatever arm state was open belongs to the case being closed.
+		// An enclosing case, if any, is back in an arm body, never in a pattern.
+		s.casePattern = false
+		s.caseHeader = false
+	}
 	s.pop()
+}
+
+// caseArmEnd records the ';;' that ends a case arm. The words after it are the
+// next arm's pattern, so a pattern spelled like a reserved word ("done)") does
+// not close the case. The segmenter reports it because ';' is a group boundary
+// and advance never sees one.
+func (s *blockScope) caseArmEnd() {
+	if k, ok := s.top(); ok && k == blockCase {
+		s.casePattern = true
+	}
 }
 
 // advance updates the scope from a group that has just been emitted. It walks
@@ -135,7 +160,16 @@ func (s *blockScope) closeKeyword() {
 // scope stays open and every later top-level command silently loses filtering.
 func (s *blockScope) advance(group string) {
 	cmdPos := true
+	// Set while the byte just consumed was a ')' acting as an operator: a
+	// case-arm pattern's or a subshell's. Bash starts a word right after such a
+	// ')', so a '#' flush against it opens a comment. isWordStart cannot tell
+	// that ')' from the one closing a command substitution, where the '#' is
+	// still inside the word ("$(ls)#tail"), so the distinction is made here,
+	// where the kind of the paren being closed is known.
+	operatorParen := false
 	for i := 0; i < len(group); {
+		afterOperatorParen := operatorParen
+		operatorParen = false
 		switch c := group[i]; c {
 		case ' ', '\t', '\n':
 			i++
@@ -147,14 +181,21 @@ func (s *blockScope) advance(group string) {
 			// position ("cat list | while read -r l" opens a loop). ';' is a
 			// group boundary and cannot reach here, but costs nothing to accept.
 			i++
-			cmdPos = true
+			// Inside parentheses that are not a subshell, '|' is pattern
+			// alternation and the word after it is a pattern: in
+			// "@(data|done).txt" a bare `done` must not close the enclosing loop.
+			if k, ok := s.top(); ok && k == blockParen {
+				cmdPos = false
+			} else {
+				cmdPos = true
+			}
 		case '&', '<', '>':
 			// Redirections only: "&&" and a bare "&" are group boundaries, so an
 			// '&' here belongs to a form like "2>&1".
 			i++
 			cmdPos = false
 		case '#':
-			if !isWordStart(group, i) {
+			if !isWordStart(group, i) && !afterOperatorParen {
 				// Not a comment: '#' can follow a quoted region inside one word
 				// (`"x"#y`). The only way to land here is just past a closing
 				// quote, which already cleared cmdPos.
@@ -174,9 +215,13 @@ func (s *blockScope) advance(group string) {
 				// End of a case-arm pattern ("  a )" or "  -v | --verbose )").
 				// The case block stays open, so the arm body stays unwrapped,
 				// and the arm's own body is a command position.
+				s.casePattern = false
+				s.caseHeader = false
+				operatorParen = true
 				cmdPos = true
 				continue
 			} else if ok && (k == blockParen || k == blockSubshell) {
+				operatorParen = k == blockSubshell
 				s.pop()
 			}
 			cmdPos = false
@@ -251,8 +296,37 @@ func (s *blockScope) openParen(group string, i int, cmdPos bool) (int, bool) {
 // is still in command position. Quoting is not stripped, matching the shell: a
 // quoted 'for' is not a reserved word, and advance never reaches here for one.
 func (s *blockScope) classify(word string, cmdPos bool) bool {
+	// `in` closes the subject of a case and opens its first arm pattern. It is
+	// read outside command position, which is where the subject leaves it.
+	if s.caseHeader && word == "in" {
+		if k, ok := s.top(); ok && k == blockCase {
+			s.caseHeader = false
+			s.casePattern = true
+			return false
+		}
+	}
+	if s.casePattern {
+		if word == "esac" {
+			// The one reserved word that still counts here: bash rejects a bare
+			// `esac` as an arm pattern, so this closes the case. Without it the
+			// scope would stay open and everything after it lose filtering.
+			s.closeKeyword()
+			return false
+		}
+		// Every other word is a pattern, not a command: `done)` opens an arm of
+		// the case, it does not close it.
+		return false
+	}
 	if !cmdPos {
 		return false
+	}
+	if s.afterTime {
+		// `time [-p] [--] pipeline`: its own options keep command position, so
+		// the opener that follows them is still seen.
+		if word == "-p" || word == "--" {
+			return true
+		}
+		s.afterTime = false
 	}
 	if s.funcName {
 		// The word after `function` is the name being defined, not a command.
@@ -277,11 +351,15 @@ func (s *blockScope) classify(word string, cmdPos bool) bool {
 		return false // a variable name follows, not a command
 	case "case":
 		s.push(blockCase)
+		s.caseHeader = true
 		return false
 	case "done", "fi", "esac":
 		s.closeKeyword()
 		return false
-	case "then", "do", "else", "elif", "!", "time":
+	case "time":
+		s.afterTime = true
+		return true
+	case "then", "do", "else", "elif", "!":
 		// Reserved words that introduce another command position, so a nested
 		// opener on the same line ("then if false") is still seen.
 		return true
