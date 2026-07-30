@@ -61,7 +61,10 @@ make build               # Build static binary (CGO_ENABLED=0)
 make build-lite          # Build without SQLite tracking (-tags lite, ~5MB smaller)
 make test                # Run all tests with coverage
 make test-race           # Run tests with race detector
-make lint                # go vet + golangci-lint
+make lint                # go vet + golangci-lint (version pinned in .golangci-lint-version)
+make verify              # Run the inline `tests:` blocks of filters/*.yaml
+make vulncheck           # govulncheck ./...
+make ci                  # Pre-PR gate: test-race + verify + lint + vulncheck
 make install             # Install using GOBIN or the Go environment
 make install-lite        # Install lite variant
 make upgrade             # Replace active snip (GOBIN overrides)
@@ -74,7 +77,8 @@ goreleaser release --snapshot --clean          # Test release build locally
 
 - snip is usually installed as a hook here, so it filters `go` and `git` output while you work.
   For raw output: `/usr/bin/git ...`, or `printf '#!/bin/sh\nexec go "$@"\n' > /tmp/rawgo && chmod +x /tmp/rawgo`
-- `snip verify` runs the **embedded** filter set: rebuild the binary after editing anything in `filters/`
+- `snip verify` runs the **embedded** filter set: rebuild the binary after editing anything in `filters/`.
+  `make verify` goes through `go run`, so it always sees the current `filters/`
 - Filter inline `tests:` blocks are CI-enforced by the `Verify filters` step in `.github/workflows/ci.yaml`
 
 ## Design Constraints
