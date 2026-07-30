@@ -169,10 +169,10 @@ func PrintReport(s Summary) {
 
 	// Group results by filter
 	type filterGroup struct {
-		name    string
-		total   int
-		passed  int
-		failed  []TestResult
+		name   string
+		total  int
+		passed int
+		failed []TestResult
 	}
 
 	groups := make(map[string]*filterGroup)

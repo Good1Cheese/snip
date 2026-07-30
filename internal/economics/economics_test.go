@@ -34,10 +34,10 @@ func seedTracker(t *testing.T, tracker *tracking.Tracker) {
 
 func TestCostForTokens(t *testing.T) {
 	tests := []struct {
-		name    string
-		tokens  int
-		priceM  float64
-		want    float64
+		name   string
+		tokens int
+		priceM float64
+		want   float64
 	}{
 		{"1M tokens at sonnet price", 1_000_000, 3.00, 3.00},
 		{"500K tokens at sonnet price", 500_000, 3.00, 1.50},

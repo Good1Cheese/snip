@@ -1,0 +1,9 @@
+# golangci-lint keeps the standard linter set; this file only adds formatting,
+# which nothing checked before: `gofmt -l` listed six files on master and
+# unrelated PRs kept picking up reformatting hunks from editors that format on
+# save (issue #144). The pinned version lives in .golangci-lint-version.
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
