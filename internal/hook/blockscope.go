@@ -65,10 +65,9 @@ const (
 //     `closeKeyword` bounds that to the enclosing block by dropping stray
 //     blockParen entries, so one malformed group cannot disable filtering for
 //     the whole message.
-//   - Not covered, by construction: line continuations (a trailing backslash is
-//     a group boundary here but not for the shell), and consumer propagation —
-//     deciding that a block's output has no consumer and rewriting its body
-//     anyway. The latter is why `(cd sub && go test ./...)` is no longer
+//   - Not covered, by construction: consumer propagation, meaning deciding that
+//     a block's output has no consumer and rewriting its body anyway. That is
+//     why `(cd sub && go test ./...)` is no longer
 //     filtered: resolving which block a trailing pipe belongs to fails towards
 //     wrong output, and this hook path prefers the opposite trade (see the #127
 //     process-substitution fix).
