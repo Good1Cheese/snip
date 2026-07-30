@@ -95,7 +95,7 @@ func TestUnproxyableCommands(t *testing.T) {
 		{"else", true},
 		{"done", true},
 		{"do", true},
-		{"perform", false},  // contains "for" but isn't the keyword
+		{"perform", false}, // contains "for" but isn't the keyword
 		{"git", false},
 		{"go", false},
 		{"docker", false},

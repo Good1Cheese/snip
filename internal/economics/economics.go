@@ -10,8 +10,8 @@ import (
 
 // Tier holds a model tier name and its input price per 1M tokens.
 type Tier struct {
-	Name     string
-	PriceM   float64 // price per 1M input tokens
+	Name   string
+	PriceM float64 // price per 1M input tokens
 }
 
 // Tiers lists all supported pricing tiers in display order.

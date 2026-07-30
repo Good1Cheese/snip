@@ -72,22 +72,22 @@ type bashInput struct {
 
 // commandEntry represents a Bash command extracted from a session with its result.
 type commandEntry struct {
-	Command    string // full command string
-	BaseCmd    string // extracted base command name
-	ToolUseID  string // tool_use id for matching results
-	Output     string // tool result content (if found)
-	IsError    bool   // whether the tool result indicated an error
-	HasResult  bool   // whether a result was matched
-	Timestamp  string // timestamp from the JSONL entry
+	Command   string // full command string
+	BaseCmd   string // extracted base command name
+	ToolUseID string // tool_use id for matching results
+	Output    string // tool result content (if found)
+	IsError   bool   // whether the tool result indicated an error
+	HasResult bool   // whether a result was matched
+	Timestamp string // timestamp from the JSONL entry
 }
 
 // ErrorPattern represents a detected error-correction pattern.
 type ErrorPattern struct {
-	BaseCommand    string // base command name (e.g. "go", "git")
-	ErrorCommand   string // the command that failed
-	ErrorOutput    string // truncated error output
-	FixCommand     string // the command that succeeded
-	Count          int    // number of times this pattern occurred
+	BaseCommand  string // base command name (e.g. "go", "git")
+	ErrorCommand string // the command that failed
+	ErrorOutput  string // truncated error output
+	FixCommand   string // the command that succeeded
+	Count        int    // number of times this pattern occurred
 }
 
 // PatternGroup aggregates similar error patterns by base command.
