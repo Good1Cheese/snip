@@ -86,6 +86,29 @@ func TestRunGrokBashAliasToolName(t *testing.T) {
 	}
 }
 
+// TestRunGrokShellToolNames pins issue #145: the released Grok CLI sends
+// `run_terminal_command`, which was not classified as a shell tool, so the hook
+// exited 0 with empty stdout — an allow — and no Grok session was ever filtered.
+func TestRunGrokShellToolNames(t *testing.T) {
+	for _, toolName := range []string{"run_terminal_command", "run_terminal_cmd", "Bash"} {
+		t.Run(toolName, func(t *testing.T) {
+			input := makeGrokPayload(toolName, "git status")
+			var out bytes.Buffer
+			denied, err := RunGrok(strings.NewReader(input), &out, []string{"git"}, nil, "/usr/local/bin/snip")
+			if err != nil {
+				t.Fatalf("RunGrok: %v", err)
+			}
+			if !denied {
+				t.Fatalf("expected denied=true for tool name %q, got an empty allow", toolName)
+			}
+			reason := extractGrokDenyReason(t, out.String())
+			if want := `"/usr/local/bin/snip" run -- git status`; !strings.Contains(reason, want) {
+				t.Errorf("reason = %q, want it to contain %q", reason, want)
+			}
+		})
+	}
+}
+
 func TestRunGrokUnsupportedPassthrough(t *testing.T) {
 	commands := []string{"git", "go"}
 	snipBin := "/usr/local/bin/snip"

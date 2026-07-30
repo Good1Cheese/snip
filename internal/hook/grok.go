@@ -12,9 +12,17 @@ import (
 // grokAgent is the value written to hookaudit.Event.Agent for Grok Build events.
 const grokAgent = "grok"
 
-// grokToolName is the native shell tool name of Grok Build (xAI's coding CLI).
-// Grok Build also maps Claude-style tool aliases, so "Bash" is accepted too.
-const grokToolName = "run_terminal_cmd"
+// grokShellTools are the tool names Grok Build uses for its shell tool.
+// `run_terminal_command` is what the released CLI actually sends;
+// `run_terminal_cmd` is the spelling its hook docs use, and `Bash` is the
+// Claude-style alias Grok Build also maps. Missing one means the hook exits 0
+// with empty stdout, which Grok reads as allow, and nothing is ever filtered
+// (issue #145).
+var grokShellTools = map[string]struct{}{
+	"run_terminal_command": {},
+	"run_terminal_cmd":     {},
+	"Bash":                 {},
+}
 
 // grokInput represents the PreToolUse payload from Grok Build. Grok Build
 // sends camelCase keys, unlike Claude Code's snake_case:
@@ -54,7 +62,7 @@ func RunGrok(r io.Reader, w io.Writer, commands []string, prefixes []Transparent
 		return false, nil // malformed JSON: pass through silently
 	}
 
-	if input.ToolName != grokToolName && input.ToolName != "Bash" {
+	if _, ok := grokShellTools[input.ToolName]; !ok {
 		return false, nil
 	}
 
