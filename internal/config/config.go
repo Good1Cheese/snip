@@ -339,3 +339,28 @@ func configPath() string {
 	}
 	return filepath.Join(home, ".config", "snip", "config.toml")
 }
+
+// ClaudeBaseDir returns the base directory for Claude Code's `.claude` files.
+// It honors the CLAUDE_CONFIG_DIR environment variable (which Claude Code itself
+// respects), falling back to ~/.claude.
+func ClaudeBaseDir() (string, error) {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// ClaudeProjectsDir returns the base Claude Code projects directory,
+// honoring CLAUDE_CONFIG_DIR. Returns "" when the home directory cannot be
+// resolved; callers treat that as "no sessions found".
+func ClaudeProjectsDir() string {
+	base, err := ClaudeBaseDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "projects")
+}

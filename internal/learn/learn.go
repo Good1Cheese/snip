@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edouard-claude/snip/internal/config"
 	"github.com/edouard-claude/snip/internal/hook"
 )
 
@@ -196,15 +197,6 @@ func parseArgs(args []string) Options {
 	return opts
 }
 
-// claudeProjectsDir returns the base Claude Code projects directory.
-func claudeProjectsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude", "projects")
-}
-
 // cwdToProjectName converts a working directory path to the Claude Code
 // project directory name format.
 func cwdToProjectName(cwd string) string {
@@ -213,7 +205,7 @@ func cwdToProjectName(cwd string) string {
 
 // findProjectDirs returns the list of Claude Code project directories to scan.
 func findProjectDirs(opts Options) ([]string, error) {
-	base := claudeProjectsDir()
+	base := config.ClaudeProjectsDir()
 	if base == "" {
 		return nil, nil
 	}
@@ -589,6 +581,7 @@ func generateRules(r Result) error {
 		return nil
 	}
 
+	// Project-relative, not CLAUDE_CONFIG_DIR: rules live with the project, not user config.
 	dir := filepath.Join(".claude", "rules")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create rules directory: %w", err)

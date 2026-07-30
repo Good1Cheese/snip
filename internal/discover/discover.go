@@ -125,15 +125,6 @@ func parseArgs(args []string) Options {
 	return opts
 }
 
-// claudeProjectsDir returns the base Claude Code projects directory.
-func claudeProjectsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude", "projects")
-}
-
 // cwdToProjectName converts a working directory path to the Claude Code
 // project directory name format: slashes become dashes, leading slash stripped.
 func cwdToProjectName(cwd string) string {
@@ -144,7 +135,7 @@ func cwdToProjectName(cwd string) string {
 
 // findProjectDirs returns the list of Claude Code project directories to scan.
 func findProjectDirs(opts Options) ([]string, error) {
-	base := claudeProjectsDir()
+	base := config.ClaudeProjectsDir()
 	if base == "" {
 		return nil, nil
 	}

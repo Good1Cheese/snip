@@ -65,8 +65,10 @@ make lint                # go vet + golangci-lint (version pinned in .golangci-l
 make verify              # Run the inline `tests:` blocks of filters/*.yaml
 make vulncheck           # govulncheck ./...
 make ci                  # Pre-PR gate: test-race + verify + lint + vulncheck
-make install             # Install to $GOPATH/bin
+make install             # Install using GOBIN or the Go environment
 make install-lite        # Install lite variant
+make upgrade             # Replace active snip (GOBIN overrides)
+make upgrade-lite        # Replace active snip with lite variant
 go test -run TestName ./internal/filter/...   # Single test
 goreleaser release --snapshot --clean          # Test release build locally
 ```

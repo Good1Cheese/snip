@@ -409,6 +409,30 @@ func TestPrintResultTruncatesLongNames(t *testing.T) {
 	}
 }
 
+func TestFindProjectDirsRespectsClaudeConfigDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	claudeDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Chdir(t.TempDir())
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(claudeDir, "projects", cwdToProjectName(cwd))
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs, err := findProjectDirs(Options{})
+	if err != nil {
+		t.Fatalf("findProjectDirs: %v", err)
+	}
+	if len(dirs) != 1 || dirs[0] != projectDir {
+		t.Errorf("findProjectDirs() = %v, want [%s]", dirs, projectDir)
+	}
+}
+
 func writeLines(t *testing.T, path string, lines []string) {
 	t.Helper()
 	data := ""
