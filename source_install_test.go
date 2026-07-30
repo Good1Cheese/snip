@@ -9,6 +9,7 @@ import (
 )
 
 // Embedding makes shell-suite changes invalidate the Go test cache.
+//
 //go:embed tests/source-install/test.sh
 var sourceInstallTestScript string
 

@@ -135,7 +135,7 @@ git clone https://github.com/edouard-claude/snip.git
 cd snip && make install
 ```
 
-On Linux, `make install` and `make install-lite` use the first available destination:
+`make install` and `make install-lite` use the first available destination:
 an explicit `GOBIN`, `go env GOBIN`, or the first `go env GOPATH` entry plus
 `/bin`. Use `make upgrade` or `make upgrade-lite` to replace the resolved
 `snip` on `PATH` instead. An explicit `GOBIN` overrides the upgrade destination.

@@ -4,7 +4,7 @@ set -eu
 
 repo_root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
 resolver="$repo_root/scripts/install-path"
-tmp_dir=$(mktemp -d)
+tmp_dir=$(CDPATH='' cd -- "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$tmp_dir"' EXIT
 
 fake_bin="$tmp_dir/bin"
