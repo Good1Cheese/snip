@@ -11,9 +11,10 @@ import (
 const grokHookSubcommand = "hook grok"
 
 // grokMatcher is the PreToolUse matcher written to the hook config. The field
-// is a regex tested against the tool name; it covers Grok Build's native shell
-// tool (run_terminal_cmd) and the Claude-style alias (Bash) it also accepts.
-const grokMatcher = "Bash|run_terminal_cmd"
+// is a regex tested against the tool name; it covers what the released CLI
+// sends (run_terminal_command), the spelling in Grok Build's hook docs
+// (run_terminal_cmd) and the Claude-style alias (Bash) it also accepts.
+const grokMatcher = "Bash|run_terminal_cmd|run_terminal_command"
 
 // grokHookFile is the snip-owned hook config filename. Grok Build loads every
 // *.json under its hooks directory, so snip writes a dedicated file rather
