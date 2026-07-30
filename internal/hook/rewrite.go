@@ -1,7 +1,6 @@
 package hook
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -53,7 +52,7 @@ type RewriteResult struct {
 // (HasUnverifiableConstruct) before calling this, so cmd here is free of command
 // substitution and carriage returns.
 func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []TransparentPrefix, snipBin string) RewriteResult {
-	quotedBin := fmt.Sprintf("%q", snipBin)
+	quotedBin := quoteSnipBin(snipBin)
 
 	var b strings.Builder
 	b.Grow(len(cmd) + 32)

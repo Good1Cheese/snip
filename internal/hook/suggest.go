@@ -1,7 +1,6 @@
 package hook
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -31,7 +30,7 @@ func suggestSnipRerun(command string, cmdSet map[string]struct{}, prefixes []Tra
 	prefix, envVars, bareCmd := ParseSegment(firstSegment)
 	base := BaseCommand(bareCmd)
 
-	quotedBin := fmt.Sprintf("%q", snipBin)
+	quotedBin := quoteSnipBin(snipBin)
 	trimmed := strings.TrimLeft(bareCmd, " \t")
 	if base == quotedBin || base == snipBin ||
 		strings.HasPrefix(trimmed, quotedBin) || strings.HasPrefix(trimmed, snipBin) {
