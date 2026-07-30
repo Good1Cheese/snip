@@ -172,6 +172,17 @@ func RewriteCommand(cmd string, cmdSet map[string]struct{}, prefixes []Transpare
 			}
 			i++
 		case '\n':
+			// A trailing unquoted backslash escapes the newline: the shell reads
+			// one command across the two lines, so this is not a group boundary.
+			// Splitting here put a trailing consumer in a different group from
+			// the head, the #111 guard never saw it, and the head was rewritten
+			// while the consumer read snip's compacted output (issue #138).
+			// Pending heredocs keep the old behaviour: their bodies start at the
+			// next line and must still be drained here.
+			if len(pending) == 0 && escapesNewline(cmd, i) {
+				i++
+				continue
+			}
 			flush(cmd[groupStart:i])
 			b.WriteByte('\n')
 			i++
@@ -286,6 +297,19 @@ func rewriteGroup(group string, cmdSet map[string]struct{}, prefixes []Transpare
 
 	wrappedHead := prefix + envVars + quotedBin + " run -- " + bareCmd
 	return wrappedHead + tail, true, hasTail
+}
+
+// escapesNewline reports whether the newline at i is escaped by the backslash
+// before it, which joins the two lines into one command. Backslashes are counted
+// because an even run is a literal backslash and really ends the line
+// ("git log \\\\" is a trailing backslash argument, not a continuation). The
+// caller only reaches here outside quotes, where a backslash can escape.
+func escapesNewline(cmd string, i int) bool {
+	n := 0
+	for j := i - 1; j >= 0 && cmd[j] == '\\'; j-- {
+		n++
+	}
+	return n%2 == 1
 }
 
 // splitFirstPipe splits group at its first top-level '|' (quoted regions are

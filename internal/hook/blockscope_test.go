@@ -874,3 +874,64 @@ func TestRewriteCommandPosition(t *testing.T) {
 		})
 	}
 }
+
+// TestRewriteLineContinuation pins the fifth shape of issue #138: a trailing
+// unquoted backslash joins two lines into one command for the shell, but the
+// segmenter split on the newline anyway. The trailing `| wc -l` then sat in a
+// different group from the head, the #111 consumer guard never saw it, and the
+// head was rewritten while the consumer counted snip's compacted output.
+func TestRewriteLineContinuation(t *testing.T) {
+	const bin = "/usr/local/bin/snip"
+	const w = `"/usr/local/bin/snip" run -- `
+	cmdSet := map[string]struct{}{"git": {}, "go": {}, "grep": {}, "wc": {}}
+
+	cases := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{
+			// The reported form: raw output is 60 lines, and `wc -l` must count
+			// all of them.
+			name: "continuation before a consumer",
+			cmd:  "grep MATCH \\\n  data.txt | wc -l",
+			want: "grep MATCH \\\n  data.txt | wc -l",
+		},
+		{
+			// No consumer: the command is still one command, so the wrapper goes
+			// in front of it once, not once per line.
+			name: "continuation without a consumer",
+			cmd:  "grep MATCH \\\n  data.txt",
+			want: w + "grep MATCH \\\n  data.txt",
+		},
+		{
+			// An even number of backslashes is a literal backslash: the line
+			// really ends and the two commands are separate groups.
+			name: "escaped backslash still ends the line",
+			cmd:  "grep MATCH data.txt \\\\\ngo build ./...",
+			want: w + "grep MATCH data.txt \\\\\n" + w + "go build ./...",
+		},
+		{
+			// A backslash inside quotes does not escape the newline either.
+			name: "backslash inside quotes",
+			cmd:  "grep 'a\\' data.txt\ngo build ./...",
+			want: w + "grep 'a\\' data.txt\n" + w + "go build ./...",
+		},
+		{
+			// The block tracker still sees the opener and the closer across a
+			// continuation.
+			name: "continuation inside a loop body",
+			cmd:  "for f in *.go\ndo\n  grep MATCH \\\n    $f\ndone | wc -l",
+			want: "for f in *.go\ndo\n  grep MATCH \\\n    $f\ndone | wc -l",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := RewriteCommand(tc.cmd, cmdSet, nil, bin)
+			if res.Command != tc.want {
+				t.Errorf("Command = %q, want %q", res.Command, tc.want)
+			}
+		})
+	}
+}
