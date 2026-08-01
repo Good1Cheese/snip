@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 func TestPatchCodexHooksNew(t *testing.T) {
@@ -166,42 +164,29 @@ func TestUnpatchCodexHooksRemovesOnlySnip(t *testing.T) {
 	}
 }
 
-func TestPatchCodexConfigTomlNew(t *testing.T) {
+func TestMigrateDeprecatedCodexHooksMissingConfigIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	res, err := patchCodexConfigToml(path, true)
-	if err != nil {
-		t.Fatalf("patch: %v", err)
+	if err := migrateDeprecatedCodexHooks(path); err != nil {
+		t.Fatalf("migrate: %v", err)
 	}
-	if res.noOp {
-		t.Error("noOp should be false for fresh write")
-	}
-	if res.backupWritten {
-		t.Error("backupWritten should be false for fresh install (no original to back up)")
-	}
-	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
-		t.Error("no backup should be written when there was no original file")
-	}
-
-	got := readToml(t, path)
-	features, ok := got["features"].(map[string]any)
-	if !ok {
-		t.Fatalf("features section missing: %#v", got)
-	}
-	if v, _ := features["codex_hooks"].(bool); !v {
-		t.Errorf("codex_hooks = %v, want true", features["codex_hooks"])
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("a missing config.toml must not be created")
 	}
 }
 
-func TestPatchCodexConfigTomlPreservesOtherKeys(t *testing.T) {
+func TestMigrateDeprecatedCodexHooksPreservesConfigFormatting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	original := []byte(`model = "gpt-5"
+	original := []byte(`# user comment
+model = 'gpt-5.6-terra'
+approval_policy = "never"
 
 [features]
-some_other_flag = true
+codex_hooks = true # keep this comment
+some_other_flag = true # preserve this
 
 [other]
 key = "value"
@@ -210,31 +195,16 @@ key = "value"
 		t.Fatal(err)
 	}
 
-	res, err := patchCodexConfigToml(path, true)
+	if err := migrateDeprecatedCodexHooks(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	expected := strings.Replace(string(original), "codex_hooks = true", "hooks = true", 1)
+	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("patch: %v", err)
+		t.Fatal(err)
 	}
-	if res.noOp {
-		t.Error("noOp should be false when a write happened")
-	}
-	if !res.backupWritten {
-		t.Error("backupWritten should be true when an existing file was rewritten")
-	}
-
-	got := readToml(t, path)
-	if got["model"] != "gpt-5" {
-		t.Errorf("model = %v, want gpt-5", got["model"])
-	}
-	features := got["features"].(map[string]any)
-	if v, _ := features["some_other_flag"].(bool); !v {
-		t.Error("some_other_flag was dropped")
-	}
-	if v, _ := features["codex_hooks"].(bool); !v {
-		t.Error("codex_hooks not set")
-	}
-	other := got["other"].(map[string]any)
-	if other["key"] != "value" {
-		t.Errorf("other.key = %v, want value", other["key"])
+	if string(got) != expected {
+		t.Errorf("config was not minimally migrated. got:\n%s", got)
 	}
 	bak, err := os.ReadFile(path + ".bak")
 	if err != nil {
@@ -245,28 +215,42 @@ key = "value"
 	}
 }
 
-func TestPatchCodexConfigTomlAlreadyEnabledIsNoOp(t *testing.T) {
+func TestMigrateDeprecatedCodexHooksDottedKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	original := []byte("model = 'gpt-5.6-terra'\nfeatures.codex_hooks = true # preserve this\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateDeprecatedCodexHooks(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "model = 'gpt-5.6-terra'\nfeatures.hooks = true # preserve this\n"
+	if string(got) != want {
+		t.Errorf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMigrateDeprecatedCodexHooksCanonicalSettingIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
 	original := []byte(`# user comment preserved
 [features]
-codex_hooks = true
+hooks = true
 `)
 	if err := os.WriteFile(path, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	infoBefore, _ := os.Stat(path)
 
-	res, err := patchCodexConfigToml(path, true)
-	if err != nil {
-		t.Fatalf("patch: %v", err)
-	}
-	if !res.noOp {
-		t.Error("noOp should be true for already-enabled state")
-	}
-	if res.backupWritten {
-		t.Error("backupWritten should be false for no-op")
+	if err := migrateDeprecatedCodexHooks(path); err != nil {
+		t.Fatalf("migrate: %v", err)
 	}
 	infoAfter, _ := os.Stat(path)
 	if infoBefore.ModTime() != infoAfter.ModTime() {
@@ -284,41 +268,25 @@ codex_hooks = true
 	}
 }
 
-func TestPatchCodexConfigTomlExplicitOptOutRefused(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+func TestMigrateDeprecatedCodexHooksExplicitOptOutRefused(t *testing.T) {
+	for _, setting := range []string{"hooks", "codex_hooks"} {
+		t.Run(setting, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			original := []byte("[features]\n" + setting + " = false\n")
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	if err := os.WriteFile(path, []byte("[features]\ncodex_hooks = false\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := patchCodexConfigToml(path, true)
-	if err == nil {
-		t.Fatal("expected error when codex_hooks is explicitly false")
-	}
-	if !errors.Is(err, errCodexHooksExplicitlyDisabled) {
-		t.Errorf("err = %v, want errCodexHooksExplicitlyDisabled", err)
-	}
-}
-
-func TestUnpatchCodexConfigTomlSetsFalse(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-
-	if _, err := patchCodexConfigToml(path, true); err != nil {
-		t.Fatalf("patch: %v", err)
-	}
-	if _, err := patchCodexConfigToml(path, false); err != nil {
-		t.Fatalf("unpatch: %v", err)
-	}
-
-	got := readToml(t, path)
-	features, ok := got["features"].(map[string]any)
-	if !ok {
-		t.Fatalf("features missing")
-	}
-	if v, _ := features["codex_hooks"].(bool); v {
-		t.Errorf("codex_hooks = true after unpatch; want false")
+			err := migrateDeprecatedCodexHooks(path)
+			if !errors.Is(err, errCodexHooksExplicitlyDisabled) {
+				t.Errorf("err = %v, want errCodexHooksExplicitlyDisabled", err)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil || string(got) != string(original) {
+				t.Errorf("config changed after refused migration: %q (%v)", got, readErr)
+			}
+		})
 	}
 }
 
@@ -340,21 +308,65 @@ func TestInitCodexEndToEnd(t *testing.T) {
 	}
 	entryHooks := preToolUse[0].(map[string]any)["hooks"].([]any)
 	cmd := entryHooks[0].(map[string]any)["command"].(string)
-	if !strings.HasSuffix(cmd, " hook codex") {
-		t.Errorf("hook command = %q, want suffix ' hook codex'", cmd)
+	if cmd != `'/usr/local/bin/snip' hook codex` {
+		t.Errorf("hook command = %q, want quoted binary path", cmd)
 	}
 
-	conf := readToml(t, codexConfigPath(home))
-	features := conf["features"].(map[string]any)
-	if v, _ := features["codex_hooks"].(bool); !v {
-		t.Errorf("codex_hooks = %v, want true", features["codex_hooks"])
+	if _, err := os.Stat(codexConfigPath(home)); !os.IsNotExist(err) {
+		t.Error("init should not create config.toml: Codex hooks are enabled by default")
 	}
 }
 
-func TestInitCodexThenUninstallSymmetric(t *testing.T) {
+func TestInitCodexQuotesPathContainingSpaces(t *testing.T) {
+	home := t.TempDir()
+	filterDir := filepath.Join(home, ".config", "snip", "filters")
+	if err := initCodex("/tmp/bin with space/snip", home, filterDir); err != nil {
+		t.Fatalf("initCodex: %v", err)
+	}
+	hooks := readSettings(t, codexHooksPath(home))
+	cmd := hooks["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"]
+	if cmd != `'/tmp/bin with space/snip' hook codex` {
+		t.Errorf("hook command = %q, want quoted path", cmd)
+	}
+}
+
+func TestShellQuoteProtectsShellMetacharacters(t *testing.T) {
+	if got, want := shellQuote("/tmp/a $HOME 'quoted'/snip"), `'/tmp/a $HOME '"'"'quoted'"'"'/snip'`; got != want {
+		t.Errorf("shellQuote() = %q, want %q", got, want)
+	}
+}
+
+func TestInitCodexRefusesDisabledHooksBeforeWritingHook(t *testing.T) {
+	home := t.TempDir()
+	configPath := codexConfigPath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("[features]\nhooks = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := initCodex("/usr/local/bin/snip", home, filepath.Join(home, "filters"))
+	if !errors.Is(err, errCodexHooksExplicitlyDisabled) {
+		t.Fatalf("err = %v, want errCodexHooksExplicitlyDisabled", err)
+	}
+	if _, err := os.Stat(codexHooksPath(home)); !os.IsNotExist(err) {
+		t.Error("hooks.json was written despite an explicit hooks=false opt-out")
+	}
+}
+
+func TestInitCodexThenUninstallLeavesConfigUntouched(t *testing.T) {
 	home := t.TempDir()
 	filterDir := filepath.Join(home, ".config", "snip", "filters")
 	_ = os.MkdirAll(filterDir, 0o755)
+	configPath := codexConfigPath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# preserve this exact config\n[features]\nhooks = true\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := initCodex("/usr/local/bin/snip", home, filterDir); err != nil {
 		t.Fatalf("initCodex: %v", err)
@@ -372,13 +384,12 @@ func TestInitCodexThenUninstallSymmetric(t *testing.T) {
 		}
 	}
 
-	conf := readToml(t, codexConfigPath(home))
-	features, ok := conf["features"].(map[string]any)
-	if !ok {
-		t.Fatal("features should exist with codex_hooks=false")
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if v, _ := features["codex_hooks"].(bool); v {
-		t.Errorf("codex_hooks should be false after uninstall, got %v", v)
+	if string(got) != string(original) {
+		t.Errorf("config.toml changed during init/uninstall. got:\n%s", got)
 	}
 }
 
@@ -438,17 +449,4 @@ func TestRunRejectsUnknownMode(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown mode") {
 		t.Errorf("err = %q, want to contain 'unknown mode'", err.Error())
 	}
-}
-
-func readToml(t *testing.T, path string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read toml: %v", err)
-	}
-	out := make(map[string]any)
-	if err := toml.Unmarshal(data, &out); err != nil {
-		t.Fatalf("parse toml: %v", err)
-	}
-	return out
 }
