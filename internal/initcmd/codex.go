@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -34,13 +33,11 @@ func codexConfigPath(home string) string {
 }
 
 // initCodex installs the snip Codex hook in ~/.codex/hooks.json. Codex hooks
-// are enabled by default. Existing deprecated codex_hooks=true settings are
-// migrated to the current hooks=true name without reserializing config.toml.
+// are enabled by default, so config.toml is only read to honour an explicit
+// opt-out and is never written to.
 func initCodex(snipBin, home, filterDir string) error {
-	configPath := codexConfigPath(home)
-	migrated, err := migrateDeprecatedCodexHooks(configPath)
-	if err != nil {
-		return fmt.Errorf("check codex config.toml: %w", err)
+	if err := checkCodexHooksEnabled(codexConfigPath(home)); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(codexConfigDir(home), 0o755); err != nil {
@@ -68,9 +65,6 @@ func initCodex(snipBin, home, filterDir string) error {
 	fmt.Println("      updatedInput. Supported commands are transparently")
 	fmt.Println("      rewritten through snip. For older Codex releases use:")
 	fmt.Println("      snip init --agent codex --mode prompt")
-	if migrated {
-		fmt.Printf("      original config.toml backed up to %s.bak\n", configPath)
-	}
 	if legacyAgentsMd != "" {
 		fmt.Printf("      legacy %s detected — remove with `snip init --agent codex --uninstall`\n", legacyAgentsMd)
 		fmt.Println("      or delete it manually if it has been edited or committed")
@@ -222,114 +216,45 @@ func isSnipCodexEntry(entry any) bool {
 // Codex hooks in config.toml. We refuse to silently override their choice.
 var errCodexHooksExplicitlyDisabled = errors.New(
 	"~/.codex/config.toml has [features].hooks = false (or deprecated codex_hooks = false); " +
-		"set it to true (or remove the line) and re-run snip init")
+		"set it to true (or remove the line) and re-run snip init. " +
+		"Older snip releases wrote codex_hooks = false themselves on uninstall, " +
+		"so the line may not be yours")
 
-var codexHooksSetting = regexp.MustCompile(`^(\s*)(?:codex_hooks|"codex_hooks"|'codex_hooks')(\s*=)`)
-var codexHooksDottedSetting = regexp.MustCompile(`^(\s*features\.)(?:codex_hooks|"codex_hooks"|'codex_hooks')(\s*=)`)
-
-// migrateDeprecatedCodexHooks validates the user's explicit hooks setting and
-// replaces only the deprecated [features].codex_hooks=true key. A line-level
-// edit preserves their comments, quotes, key order, and unrelated settings.
-func migrateDeprecatedCodexHooks(path string) (bool, error) {
+// checkCodexHooksEnabled reports whether snip may install its Codex hook.
+//
+// config.toml is only read, never written: Codex enables hooks by default, so
+// the file has nothing snip needs to add. The deprecated codex_hooks alias is
+// still honoured by Codex, so an existing one is left in place rather than
+// renamed. A config that cannot be read or parsed is an error, not an implicit
+// "no opt-out": silently installing over an unreadable opt-out is the one
+// outcome this check exists to prevent.
+func checkCodexHooksEnabled(path string) error {
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return false, nil
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read codex config.toml: %w", err)
 	}
 
 	cfg := make(map[string]any)
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return false, nil
+		return fmt.Errorf("parse codex config.toml: %w", err)
 	}
+
 	features, _ := cfg["features"].(map[string]any)
 	if featureFlagDisabled(features, "hooks") || featureFlagDisabled(features, "codex_hooks") {
-		return false, errCodexHooksExplicitlyDisabled
+		return errCodexHooksExplicitlyDisabled
 	}
-	legacyEnabled, _ := features["codex_hooks"].(bool)
-	if !legacyEnabled {
-		return false, nil
-	}
-
-	canonical, canonicalPresent := features["hooks"]
-	canonicalEnabled, canonicalIsBool := canonical.(bool)
-	if canonicalPresent && !canonicalIsBool {
-		return false, nil
-	}
-	updated, changed := rewriteDeprecatedCodexHooks(string(data), canonicalPresent && canonicalEnabled)
-	if !changed {
-		return false, nil
-	}
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		return false, nil
-	}
-	mode := info.Mode().Perm()
-	if err := os.WriteFile(path+".bak", data, mode); err != nil {
-		return false, nil
-	}
-	if err := os.WriteFile(path, []byte(updated), mode); err != nil {
-		return false, nil
-	}
-	return true, nil
+	return nil
 }
 
+// featureFlagDisabled reports whether key is present in features and set to
+// the boolean false. A missing key or a non-boolean value is not an opt-out.
 func featureFlagDisabled(features map[string]any, key string) bool {
 	value, present := features[key]
 	disabled, isBool := value.(bool)
 	return present && isBool && !disabled
-}
-
-// rewriteDeprecatedCodexHooks updates the legacy key in [features] or its
-// top-level dotted-key form. If the canonical key already exists, it comments
-// out the redundant legacy setting rather than creating a duplicate key or
-// discarding its inline comment.
-func rewriteDeprecatedCodexHooks(config string, canonicalPresent bool) (string, bool) {
-	lines := strings.SplitAfter(config, "\n")
-	inFeatures := false
-	atTopLevel := true
-	multilineDelimiter := ""
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if multilineDelimiter != "" {
-			if strings.Count(line, multilineDelimiter)%2 == 1 {
-				multilineDelimiter = ""
-			}
-			continue
-		}
-		if strings.Contains(line, `"""`) {
-			if strings.Count(line, `"""`)%2 == 1 {
-				multilineDelimiter = `"""`
-			}
-			continue
-		}
-		if strings.Contains(line, `'''`) {
-			if strings.Count(line, `'''`)%2 == 1 {
-				multilineDelimiter = `'''`
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "[") {
-			inFeatures = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")) == "features"
-			atTopLevel = false
-			continue
-		}
-
-		setting := codexHooksSetting
-		if atTopLevel {
-			setting = codexHooksDottedSetting
-		} else if !inFeatures {
-			continue
-		}
-		if !setting.MatchString(line) {
-			continue
-		}
-		if canonicalPresent {
-			lines[i] = "# Deprecated Codex setting removed by snip: " + line
-		} else {
-			lines[i] = setting.ReplaceAllString(line, "${1}hooks${2}")
-		}
-		return strings.Join(lines, ""), true
-	}
-	return config, false
 }
 
 // detectLegacyAgentsMD returns the path to AGENTS.md in dir if its content

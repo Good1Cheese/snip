@@ -164,182 +164,64 @@ func TestUnpatchCodexHooksRemovesOnlySnip(t *testing.T) {
 	}
 }
 
-func TestMigrateDeprecatedCodexHooksMissingConfigIsNoOp(t *testing.T) {
+func TestCheckCodexHooksEnabledMissingConfigIsAllowed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	if _, err := migrateDeprecatedCodexHooks(path); err != nil {
-		t.Fatalf("migrate: %v", err)
+	if err := checkCodexHooksEnabled(path); err != nil {
+		t.Fatalf("check: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("a missing config.toml must not be created")
 	}
 }
 
-func TestMigrateDeprecatedCodexHooksPreservesConfigFormatting(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-
-	original := []byte(`# user comment
-model = 'gpt-5.6-terra'
-approval_policy = "never"
-
-[features]
-codex_hooks = true # keep this comment
-some_other_flag = true # preserve this
-
-[other]
-key = "value"
-`)
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
+func TestCheckCodexHooksEnabledNeverWritesConfig(t *testing.T) {
+	// Codex enables hooks by default and still honours the deprecated
+	// codex_hooks alias, so snip has nothing to add to any of these.
+	configs := map[string]string{
+		"no features section": "model = 'gpt-5.6-terra'\n",
+		"canonical key":       "# user comment\n[features]\nhooks = true\n",
+		"legacy alias":        "[features]\ncodex_hooks = true # keep this comment\n",
+		"both keys":           "[features]\nhooks = true\ncodex_hooks = true\n",
+		"dotted legacy key":   "features.codex_hooks = true\n",
+		"inline table":        "features = { codex_hooks = true }\n",
 	}
 
-	migrated, err := migrateDeprecatedCodexHooks(path)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if !migrated {
-		t.Fatal("expected migration")
-	}
-	expected := strings.Replace(string(original), "codex_hooks = true", "hooks = true", 1)
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != expected {
-		t.Errorf("config was not minimally migrated. got:\n%s", got)
-	}
-	bak, err := os.ReadFile(path + ".bak")
-	if err != nil {
-		t.Fatalf("backup not written: %v", err)
-	}
-	if string(bak) != string(original) {
-		t.Error("backup does not match original")
+	for name, original := range configs {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := checkCodexHooksEnabled(path); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != original {
+				t.Errorf("config.toml was rewritten:\n%s", got)
+			}
+			if after, err := os.Stat(path); err == nil && before.ModTime() != after.ModTime() {
+				t.Error("config.toml was touched")
+			}
+			if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+				t.Error("no backup should be written: snip never edits config.toml")
+			}
+		})
 	}
 }
 
-func TestMigrateDeprecatedCodexHooksDottedKey(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	original := []byte("model = 'gpt-5.6-terra'\nfeatures.codex_hooks = true # preserve this\n")
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := migrateDeprecatedCodexHooks(path)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if !migrated {
-		t.Fatal("expected migration")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "model = 'gpt-5.6-terra'\nfeatures.hooks = true # preserve this\n"
-	if string(got) != want {
-		t.Errorf("config = %q, want %q", got, want)
-	}
-}
-
-func TestMigrateDeprecatedCodexHooksSkipsUnsupportedFormatting(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	original := []byte("features = { codex_hooks = true }\n")
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := migrateDeprecatedCodexHooks(path)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if migrated {
-		t.Fatal("inline table should not be rewritten")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil || string(got) != string(original) {
-		t.Errorf("config changed after skipped migration: %q (%v)", got, err)
-	}
-}
-
-func TestMigrateDeprecatedCodexHooksAllowsWhitespaceInTableHeader(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("[ features ]\ncodex_hooks = true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := migrateDeprecatedCodexHooks(path)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if !migrated {
-		t.Fatal("expected migration")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil || string(got) != "[ features ]\nhooks = true\n" {
-		t.Errorf("config = %q (%v)", got, err)
-	}
-}
-
-func TestMigrateDeprecatedCodexHooksSkipsMultilineStrings(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	original := []byte("notes = \"\"\"\n[features]\ncodex_hooks = true\n\"\"\"\n\n[features]\ncodex_hooks = true\n")
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := migrateDeprecatedCodexHooks(path)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if !migrated {
-		t.Fatal("expected migration")
-	}
-	want := "notes = \"\"\"\n[features]\ncodex_hooks = true\n\"\"\"\n\n[features]\nhooks = true\n"
-	got, err := os.ReadFile(path)
-	if err != nil || string(got) != want {
-		t.Errorf("config = %q, want %q (%v)", got, want, err)
-	}
-}
-
-func TestMigrateDeprecatedCodexHooksCanonicalSettingIsNoOp(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-
-	original := []byte(`# user comment preserved
-[features]
-hooks = true
-`)
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	infoBefore, _ := os.Stat(path)
-
-	if _, err := migrateDeprecatedCodexHooks(path); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	infoAfter, _ := os.Stat(path)
-	if infoBefore.ModTime() != infoAfter.ModTime() {
-		t.Error("file should not have been rewritten")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(original) {
-		t.Errorf("file was rewritten; comments lost. got:\n%s", got)
-	}
-	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
-		t.Error("no backup should be written for no-op")
-	}
-}
-
-func TestMigrateDeprecatedCodexHooksExplicitOptOutRefused(t *testing.T) {
+func TestCheckCodexHooksEnabledExplicitOptOutRefused(t *testing.T) {
 	for _, setting := range []string{"hooks", "codex_hooks"} {
 		t.Run(setting, func(t *testing.T) {
 			dir := t.TempDir()
@@ -349,15 +231,60 @@ func TestMigrateDeprecatedCodexHooksExplicitOptOutRefused(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err := migrateDeprecatedCodexHooks(path)
+			err := checkCodexHooksEnabled(path)
 			if !errors.Is(err, errCodexHooksExplicitlyDisabled) {
 				t.Errorf("err = %v, want errCodexHooksExplicitlyDisabled", err)
 			}
 			got, readErr := os.ReadFile(path)
 			if readErr != nil || string(got) != string(original) {
-				t.Errorf("config changed after refused migration: %q (%v)", got, readErr)
+				t.Errorf("config changed after a refused install: %q (%v)", got, readErr)
 			}
 		})
+	}
+}
+
+func TestCheckCodexHooksEnabledNonBooleanIsNotAnOptOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[features]\nhooks = \"false\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkCodexHooksEnabled(path); err != nil {
+		t.Errorf("a non-boolean value is not an opt-out, got %v", err)
+	}
+}
+
+// An unreadable or malformed config.toml must not be read as "no opt-out":
+// installing over an opt-out we simply failed to see is the outcome this
+// check exists to prevent.
+func TestCheckCodexHooksEnabledUnreadableConfigIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// A directory in place of the file is an unreadable path on every OS,
+	// unlike chmod 000 which root and Windows both ignore.
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := checkCodexHooksEnabled(path)
+	if err == nil {
+		t.Fatal("expected an error for an unreadable config.toml")
+	}
+	if errors.Is(err, errCodexHooksExplicitlyDisabled) {
+		t.Errorf("err = %v, want a read error", err)
+	}
+}
+
+func TestCheckCodexHooksEnabledMalformedConfigIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("oops =\n[features]\nhooks = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkCodexHooksEnabled(path); err == nil {
+		t.Fatal("expected an error for a config.toml that does not parse")
 	}
 }
 
@@ -420,13 +347,13 @@ func TestInitCodexRefusesDisabledHooksBeforeWritingHook(t *testing.T) {
 	}
 }
 
-func TestInitCodexContinuesWhenLegacySettingCannotBeMigrated(t *testing.T) {
+func TestInitCodexLeavesLegacyConfigUntouched(t *testing.T) {
 	home := t.TempDir()
 	configPath := codexConfigPath(home)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := []byte("features = { codex_hooks = true }\n")
+	original := []byte("[features]\ncodex_hooks = true # still honoured by Codex\n")
 	if err := os.WriteFile(configPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -439,33 +366,27 @@ func TestInitCodexContinuesWhenLegacySettingCannotBeMigrated(t *testing.T) {
 	}
 	got, err := os.ReadFile(configPath)
 	if err != nil || string(got) != string(original) {
-		t.Errorf("config changed after skipped migration: %q (%v)", got, err)
+		t.Errorf("config changed during install: %q (%v)", got, err)
+	}
+	if _, err := os.Stat(configPath + ".bak"); !os.IsNotExist(err) {
+		t.Error("install wrote a config.toml backup it does not need")
 	}
 }
 
-func TestInitCodexContinuesWhenConfigBackupFails(t *testing.T) {
+// An install must fail closed when config.toml cannot be read: an opt-out we
+// could not parse is still an opt-out.
+func TestInitCodexRefusesUnreadableConfigBeforeWritingHook(t *testing.T) {
 	home := t.TempDir()
 	configPath := codexConfigPath(home)
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	original := []byte("[features]\ncodex_hooks = true\n")
-	if err := os.WriteFile(configPath, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(configPath+".bak", 0o755); err != nil {
+	if err := os.MkdirAll(configPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := initCodex("/usr/local/bin/snip", home, filepath.Join(home, "filters")); err != nil {
-		t.Fatalf("initCodex: %v", err)
+	if err := initCodex("/usr/local/bin/snip", home, filepath.Join(home, "filters")); err == nil {
+		t.Fatal("expected an error for an unreadable config.toml")
 	}
-	if _, err := os.Stat(codexHooksPath(home)); err != nil {
-		t.Fatalf("hooks.json was not installed: %v", err)
-	}
-	got, err := os.ReadFile(configPath)
-	if err != nil || string(got) != string(original) {
-		t.Errorf("config changed after failed backup: %q (%v)", got, err)
+	if _, err := os.Stat(codexHooksPath(home)); !os.IsNotExist(err) {
+		t.Error("hooks.json was written despite an unreadable config.toml")
 	}
 }
 
