@@ -168,7 +168,7 @@ func TestMigrateDeprecatedCodexHooksMissingConfigIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	if err := migrateDeprecatedCodexHooks(path); err != nil {
+	if _, err := migrateDeprecatedCodexHooks(path); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -195,8 +195,12 @@ key = "value"
 		t.Fatal(err)
 	}
 
-	if err := migrateDeprecatedCodexHooks(path); err != nil {
+	migrated, err := migrateDeprecatedCodexHooks(path)
+	if err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration")
 	}
 	expected := strings.Replace(string(original), "codex_hooks = true", "hooks = true", 1)
 	got, err := os.ReadFile(path)
@@ -223,8 +227,12 @@ func TestMigrateDeprecatedCodexHooksDottedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateDeprecatedCodexHooks(path); err != nil {
+	migrated, err := migrateDeprecatedCodexHooks(path)
+	if err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration")
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -233,6 +241,69 @@ func TestMigrateDeprecatedCodexHooksDottedKey(t *testing.T) {
 	want := "model = 'gpt-5.6-terra'\nfeatures.hooks = true # preserve this\n"
 	if string(got) != want {
 		t.Errorf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMigrateDeprecatedCodexHooksSkipsUnsupportedFormatting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	original := []byte("features = { codex_hooks = true }\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := migrateDeprecatedCodexHooks(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if migrated {
+		t.Fatal("inline table should not be rewritten")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Errorf("config changed after skipped migration: %q (%v)", got, err)
+	}
+}
+
+func TestMigrateDeprecatedCodexHooksAllowsWhitespaceInTableHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[ features ]\ncodex_hooks = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := migrateDeprecatedCodexHooks(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "[ features ]\nhooks = true\n" {
+		t.Errorf("config = %q (%v)", got, err)
+	}
+}
+
+func TestMigrateDeprecatedCodexHooksSkipsMultilineStrings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	original := []byte("notes = \"\"\"\n[features]\ncodex_hooks = true\n\"\"\"\n\n[features]\ncodex_hooks = true\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := migrateDeprecatedCodexHooks(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration")
+	}
+	want := "notes = \"\"\"\n[features]\ncodex_hooks = true\n\"\"\"\n\n[features]\nhooks = true\n"
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != want {
+		t.Errorf("config = %q, want %q (%v)", got, want, err)
 	}
 }
 
@@ -249,7 +320,7 @@ hooks = true
 	}
 	infoBefore, _ := os.Stat(path)
 
-	if err := migrateDeprecatedCodexHooks(path); err != nil {
+	if _, err := migrateDeprecatedCodexHooks(path); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	infoAfter, _ := os.Stat(path)
@@ -278,7 +349,7 @@ func TestMigrateDeprecatedCodexHooksExplicitOptOutRefused(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := migrateDeprecatedCodexHooks(path)
+			_, err := migrateDeprecatedCodexHooks(path)
 			if !errors.Is(err, errCodexHooksExplicitlyDisabled) {
 				t.Errorf("err = %v, want errCodexHooksExplicitlyDisabled", err)
 			}
@@ -308,7 +379,7 @@ func TestInitCodexEndToEnd(t *testing.T) {
 	}
 	entryHooks := preToolUse[0].(map[string]any)["hooks"].([]any)
 	cmd := entryHooks[0].(map[string]any)["command"].(string)
-	if cmd != `'/usr/local/bin/snip' hook codex` {
+	if cmd != `"/usr/local/bin/snip" hook codex` {
 		t.Errorf("hook command = %q, want quoted binary path", cmd)
 	}
 
@@ -325,14 +396,8 @@ func TestInitCodexQuotesPathContainingSpaces(t *testing.T) {
 	}
 	hooks := readSettings(t, codexHooksPath(home))
 	cmd := hooks["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"]
-	if cmd != `'/tmp/bin with space/snip' hook codex` {
+	if cmd != `"/tmp/bin with space/snip" hook codex` {
 		t.Errorf("hook command = %q, want quoted path", cmd)
-	}
-}
-
-func TestShellQuoteProtectsShellMetacharacters(t *testing.T) {
-	if got, want := shellQuote("/tmp/a $HOME 'quoted'/snip"), `'/tmp/a $HOME '"'"'quoted'"'"'/snip'`; got != want {
-		t.Errorf("shellQuote() = %q, want %q", got, want)
 	}
 }
 
@@ -352,6 +417,55 @@ func TestInitCodexRefusesDisabledHooksBeforeWritingHook(t *testing.T) {
 	}
 	if _, err := os.Stat(codexHooksPath(home)); !os.IsNotExist(err) {
 		t.Error("hooks.json was written despite an explicit hooks=false opt-out")
+	}
+}
+
+func TestInitCodexContinuesWhenLegacySettingCannotBeMigrated(t *testing.T) {
+	home := t.TempDir()
+	configPath := codexConfigPath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("features = { codex_hooks = true }\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := initCodex("/usr/local/bin/snip", home, filepath.Join(home, "filters")); err != nil {
+		t.Fatalf("initCodex: %v", err)
+	}
+	if _, err := os.Stat(codexHooksPath(home)); err != nil {
+		t.Fatalf("hooks.json was not installed: %v", err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil || string(got) != string(original) {
+		t.Errorf("config changed after skipped migration: %q (%v)", got, err)
+	}
+}
+
+func TestInitCodexContinuesWhenConfigBackupFails(t *testing.T) {
+	home := t.TempDir()
+	configPath := codexConfigPath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("[features]\ncodex_hooks = true\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(configPath+".bak", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := initCodex("/usr/local/bin/snip", home, filepath.Join(home, "filters")); err != nil {
+		t.Fatalf("initCodex: %v", err)
+	}
+	if _, err := os.Stat(codexHooksPath(home)); err != nil {
+		t.Fatalf("hooks.json was not installed: %v", err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil || string(got) != string(original) {
+		t.Errorf("config changed after failed backup: %q (%v)", got, err)
 	}
 }
 

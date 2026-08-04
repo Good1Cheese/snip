@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
+	"github.com/edouard-claude/snip/internal/hook"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -36,7 +38,8 @@ func codexConfigPath(home string) string {
 // migrated to the current hooks=true name without reserializing config.toml.
 func initCodex(snipBin, home, filterDir string) error {
 	configPath := codexConfigPath(home)
-	if err := migrateDeprecatedCodexHooks(configPath); err != nil {
+	migrated, err := migrateDeprecatedCodexHooks(configPath)
+	if err != nil {
 		return fmt.Errorf("check codex config.toml: %w", err)
 	}
 
@@ -44,10 +47,9 @@ func initCodex(snipBin, home, filterDir string) error {
 		return fmt.Errorf("create codex config dir: %w", err)
 	}
 
-	// Hook commands are interpreted by a shell. Quote the binary path so an
-	// installation under a directory containing spaces or shell metacharacters
-	// still invokes snip.
-	hookCommand := shellQuote(snipBin) + " " + codexHookSubcommand
+	// Reuse the command-rewrite quoting so the installed hook works with the
+	// platform shell, including cmd.exe on Windows.
+	hookCommand := hook.QuoteBinFor(snipBin, runtime.GOOS) + " " + codexHookSubcommand
 
 	hooksPath := codexHooksPath(home)
 	if err := patchCodexHooks(hooksPath, hookCommand); err != nil {
@@ -66,6 +68,9 @@ func initCodex(snipBin, home, filterDir string) error {
 	fmt.Println("      updatedInput. Supported commands are transparently")
 	fmt.Println("      rewritten through snip. For older Codex releases use:")
 	fmt.Println("      snip init --agent codex --mode prompt")
+	if migrated {
+		fmt.Printf("      original config.toml backed up to %s.bak\n", configPath)
+	}
 	if legacyAgentsMd != "" {
 		fmt.Printf("      legacy %s detected — remove with `snip init --agent codex --uninstall`\n", legacyAgentsMd)
 		fmt.Println("      or delete it manually if it has been edited or committed")
@@ -225,60 +230,52 @@ var codexHooksDottedSetting = regexp.MustCompile(`^(\s*features\.)(?:codex_hooks
 // migrateDeprecatedCodexHooks validates the user's explicit hooks setting and
 // replaces only the deprecated [features].codex_hooks=true key. A line-level
 // edit preserves their comments, quotes, key order, and unrelated settings.
-func migrateDeprecatedCodexHooks(path string) error {
+func migrateDeprecatedCodexHooks(path string) (bool, error) {
 	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read config.toml: %w", err)
-	}
-	if os.IsNotExist(err) || len(data) == 0 {
-		return nil
+	if err != nil || len(data) == 0 {
+		return false, nil
 	}
 
 	cfg := make(map[string]any)
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("parse config.toml: %w", err)
+		return false, nil
 	}
 	features, _ := cfg["features"].(map[string]any)
 	if featureFlagDisabled(features, "hooks") || featureFlagDisabled(features, "codex_hooks") {
-		return errCodexHooksExplicitlyDisabled
+		return false, errCodexHooksExplicitlyDisabled
 	}
 	legacyEnabled, _ := features["codex_hooks"].(bool)
 	if !legacyEnabled {
-		return nil
+		return false, nil
 	}
 
 	canonical, canonicalPresent := features["hooks"]
 	canonicalEnabled, canonicalIsBool := canonical.(bool)
 	if canonicalPresent && !canonicalIsBool {
-		return fmt.Errorf("[features].hooks must be a boolean")
+		return false, nil
 	}
 	updated, changed := rewriteDeprecatedCodexHooks(string(data), canonicalPresent && canonicalEnabled)
 	if !changed {
-		return fmt.Errorf("find [features].codex_hooks setting to migrate")
+		return false, nil
 	}
 	info, statErr := os.Stat(path)
 	if statErr != nil {
-		return fmt.Errorf("stat config.toml: %w", statErr)
+		return false, nil
 	}
 	mode := info.Mode().Perm()
 	if err := os.WriteFile(path+".bak", data, mode); err != nil {
-		return fmt.Errorf("back up config.toml: %w", err)
+		return false, nil
 	}
 	if err := os.WriteFile(path, []byte(updated), mode); err != nil {
-		return fmt.Errorf("write config.toml: %w", err)
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 func featureFlagDisabled(features map[string]any, key string) bool {
 	value, present := features[key]
 	disabled, isBool := value.(bool)
 	return present && isBool && !disabled
-}
-
-// shellQuote returns a POSIX-shell-safe single-quoted argument.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // rewriteDeprecatedCodexHooks updates the legacy key in [features] or its
@@ -289,10 +286,29 @@ func rewriteDeprecatedCodexHooks(config string, canonicalPresent bool) (string, 
 	lines := strings.SplitAfter(config, "\n")
 	inFeatures := false
 	atTopLevel := true
+	multilineDelimiter := ""
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if multilineDelimiter != "" {
+			if strings.Count(line, multilineDelimiter)%2 == 1 {
+				multilineDelimiter = ""
+			}
+			continue
+		}
+		if strings.Contains(line, `"""`) {
+			if strings.Count(line, `"""`)%2 == 1 {
+				multilineDelimiter = `"""`
+			}
+			continue
+		}
+		if strings.Contains(line, `'''`) {
+			if strings.Count(line, `'''`)%2 == 1 {
+				multilineDelimiter = `'''`
+			}
+			continue
+		}
 		if strings.HasPrefix(trimmed, "[") {
-			inFeatures = trimmed == "[features]"
+			inFeatures = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")) == "features"
 			atTopLevel = false
 			continue
 		}
